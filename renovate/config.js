@@ -1,5 +1,5 @@
 module.exports = {
-  platform: 'gitea',
+  platform: 'forgejo',
   endpoint: 'https://codeberg.org/api/v1',
   token: process.env.RENOVATE_TOKEN,
 
@@ -19,9 +19,21 @@ module.exports = {
   automergeType: 'pr',
   platformAutomerge: true,
 
+  hostRules: [
+    {
+      matchHost: 'api.github.com',
+      token: process.env.GITHUB_TOKEN
+    },
+    {
+      matchHost: 'github.com',
+      token: process.env.GITHUB_TOKEN,
+    },
+  ],
+
   packageRules: [
     {
       matchUpdateTypes: ['patch', 'minor', 'pin', 'digest'],
+      groupName: 'minor and patch dependencies',
       automerge: true
     },
     {
@@ -30,7 +42,7 @@ module.exports = {
     }
   ],
 
-  prHourlyLimit: 4,
+  prHourlyLimit: 20,
   prConcurrentLimit: 10,
 
   timezone: 'Europe/Berlin'

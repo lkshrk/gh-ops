@@ -8,6 +8,8 @@ steps:
     environment:
       RENOVATE_TOKEN:
         from_secret: renovate_token
-      LOG_LEVEL: info
+      RENOVATE_CONFIG_FILE: renovate/config.js
+      GITHUB_TOKEN:
+        from_secret: github_token
     commands:
-      - renovate --config-file=config.js
+      - renovate
