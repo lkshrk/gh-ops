@@ -1,0 +1,13 @@
+when:
+  - event: cron
+  - event: manual
+
+steps:
+  renovate:
+    image: renovate/renovate:latest
+    environment:
+      RENOVATE_TOKEN:
+        from_secret: renovate_token
+      LOG_LEVEL: info
+    commands:
+      - renovate --config-file=config.js
