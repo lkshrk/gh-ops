@@ -3,7 +3,11 @@ module.exports = {
   token: process.env.RENOVATE_TOKEN,
 
   autodiscover: true,
-  autodiscoverFilter: ['lkshrk/*'],
+  autodiscoverFilter: [
+    'lkshrk/civora-backend',
+    'lkshrk/civora-web',
+    'lkshrk/civora-spec',
+  ],
 
   onboarding: true,
   requireConfig: 'optional',
