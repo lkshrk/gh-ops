@@ -1,12 +1,9 @@
 module.exports = {
-  platform: 'forgejo',
-  endpoint: 'https://codeberg.org/api/v1',
+  platform: 'github',
   token: process.env.RENOVATE_TOKEN,
 
   autodiscover: true,
-
-  // Strongly recommended once tested:
-  // autodiscoverFilter: ['your-user/*', 'your-org/*'],
+  autodiscoverFilter: ['lkshrk/*'],
 
   onboarding: true,
   requireConfig: 'optional',
@@ -18,17 +15,6 @@ module.exports = {
   automerge: true,
   automergeType: 'pr',
   platformAutomerge: true,
-
-  hostRules: [
-    {
-      matchHost: 'api.github.com',
-      token: process.env.GITHUB_TOKEN
-    },
-    {
-      matchHost: 'github.com',
-      token: process.env.GITHUB_TOKEN,
-    },
-  ],
 
   packageRules: [
     {
