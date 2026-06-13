@@ -36,6 +36,24 @@ repositories, set this for a full allowlist run:
 RENOVATE_RUN_ALL=true
 ```
 
+Create or update the daily Woodpecker cron with:
+
+```sh
+WOODPECKER_TOKEN=... node renovate/scripts/upsert-cron.js
+```
+
+Defaults:
+
+- repository id: `13`
+- cron name: `renovate-daily`
+- schedule: `@daily`
+- branch: `main`
+- timezone: `Europe/Berlin`
+
+Override with `WOODPECKER_REPO_ID`, `RENOVATE_CRON_NAME`,
+`RENOVATE_CRON_SCHEDULE`, `RENOVATE_CRON_BRANCH`, or
+`RENOVATE_CRON_TIMEZONE`.
+
 ## Required Secrets
 
 Woodpecker must provide:
@@ -119,6 +137,44 @@ Use these repo-local configs:
 
 ## Future GitHub App Bridge
 
-After cron/manual runners are stable, add a GitHub App bridge that receives
-Dependency Dashboard, Renovate PR, label, and completed-check events and
-triggers targeted Woodpecker runs with `RENOVATE_REPOSITORIES=owner/repo`.
+The trigger bridge in `renovate-trigger-bridge/` receives GitHub webhooks,
+verifies the GitHub webhook signature, checks that the repository is managed,
+and triggers a targeted Woodpecker manual pipeline with:
+
+```sh
+RENOVATE_REPOSITORIES=owner/repo
+```
+
+Supported first-wave triggers:
+
+- edited issues
+- edited pull requests
+- created or edited issue comments
+
+The body/comment must contain a checked checkbox line:
+
+```md
+- [x] run renovate
+```
+
+For edited issues and pull requests, the bridge triggers when that checkbox is
+newly checked. This prevents unrelated later edits from retriggering Renovate
+while the checkbox remains checked.
+
+Bridge environment:
+
+- `GITHUB_WEBHOOK_SECRET` - webhook secret configured on the GitHub App
+- `WOODPECKER_TOKEN` - Woodpecker personal access token
+- `WOODPECKER_API_URL` - defaults to `https://ci.h-cloud.io/api`
+- `WOODPECKER_REPO_ID` - defaults to `13`
+- `WOODPECKER_BRANCH` - defaults to `main`
+- `PORT` - defaults to `3000`
+- `RENOVATE_BRIDGE_DRY_RUN=true` - verify webhook handling without triggering CI
+
+Configure the GitHub App webhook URL to:
+
+```text
+https://<bridge-host>/github-webhook
+```
+
+Subscribe to `Issues`, `Pull request`, and `Issue comment` events.
