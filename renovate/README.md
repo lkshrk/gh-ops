@@ -44,13 +44,13 @@ WOODPECKER_TOKEN=... node renovate/scripts/upsert-cron.js
 
 Defaults:
 
-- repository id: `13`
+- repository: `lkshrk/woodpecker-ops`
 - cron name: `renovate-daily`
 - schedule: `@daily`
 - branch: `main`
 - timezone: `Europe/Berlin`
 
-Override with `WOODPECKER_REPO_ID`, `RENOVATE_CRON_NAME`,
+Override with `WOODPECKER_REPO`, `WOODPECKER_REPO_ID`, `RENOVATE_CRON_NAME`,
 `RENOVATE_CRON_SCHEDULE`, `RENOVATE_CRON_BRANCH`, or
 `RENOVATE_CRON_TIMEZONE`.
 
