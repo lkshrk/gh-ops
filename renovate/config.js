@@ -8,11 +8,25 @@ const targetRepositories = process.env.RENOVATE_REPOSITORIES
     ? managedRepositories
     : [];
 
+const hostRules = [
+  ...(process.env.DOCKERHUB_USERNAME && process.env.DOCKERHUB_PASSWORD
+    ? [
+        {
+          hostType: 'docker',
+          matchHost: 'docker.io',
+          username: process.env.DOCKERHUB_USERNAME,
+          password: process.env.DOCKERHUB_PASSWORD,
+        },
+      ]
+    : []),
+];
+
 module.exports = {
   platform: 'github',
   ...(process.env.RENOVATE_TOKEN ? { token: process.env.RENOVATE_TOKEN } : {}),
 
   repositories: targetRepositories,
+  hostRules,
   onboarding: false,
   requireConfig: 'required',
 

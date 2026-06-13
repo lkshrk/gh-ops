@@ -8,6 +8,10 @@ steps:
     environment:
       RENOVATE_TOKEN:
         from_secret: renovate_token
+      DOCKERHUB_USERNAME:
+        from_secret: dockerhub_username
+      DOCKERHUB_PASSWORD:
+        from_secret: dockerhub_password
       RENOVATE_CONFIG_FILE: renovate/config.js
       LOG_LEVEL: info
     commands:
