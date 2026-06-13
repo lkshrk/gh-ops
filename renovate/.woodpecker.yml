@@ -22,9 +22,9 @@ steps:
       RENOVATE_DOCKER_PASSWORD:
         from_secret: docker_token
       GHCR_USERNAME:
-        from_secret: ghcr_user
+        from_secret: perso_user
       GHCR_PASSWORD:
-        from_secret: ghcr_token
+        from_secret: perso_token
       RENOVATE_CONFIG_FILE: renovate/config.js
       LOG_LEVEL: info
     commands:
@@ -53,9 +53,9 @@ steps:
       RENOVATE_DOCKER_PASSWORD:
         from_secret: docker_token
       GHCR_USERNAME:
-        from_secret: ghcr_user
+        from_secret: perso_user
       GHCR_PASSWORD:
-        from_secret: ghcr_token
+        from_secret: perso_token
       RENOVATE_CONFIG_FILE: renovate/config.js
       LOG_LEVEL: info
     commands:
