@@ -4,8 +4,10 @@ Central self-hosted Renovate runner for `lkshrk/*` and `webdev-harke/*` GitHub
 repositories.
 
 This repo owns execution scope, credentials, shared presets, and Woodpecker run
-limits. Individual repositories should keep only a small `.renovaterc.json5`
-that extends the right shared preset and records repo-specific exceptions.
+limits. The first migration wave preserves each target repository's existing
+Renovate config 1:1 and only removes old repo-local Renovate pipelines. Shared
+presets are available for a later cleanup pass after the central runner is
+stable.
 
 ## Run Modes
 
@@ -14,7 +16,8 @@ The Woodpecker pipeline runs on:
 - cron
 - manual trigger
 
-By default it runs every repository listed in `repositories.js`.
+By default it exits without running Renovate. This prevents double runs while
+target repositories still have repo-local Renovate pipelines.
 
 For a targeted run, set:
 
@@ -23,6 +26,13 @@ RENOVATE_REPOSITORIES=lkshrk/example-repo
 ```
 
 Multiple repositories can be comma-separated.
+
+After old repo-local Renovate pipelines have been removed from target
+repositories, set this for a full allowlist run:
+
+```sh
+RENOVATE_RUN_ALL=true
+```
 
 ## Required Secret
 

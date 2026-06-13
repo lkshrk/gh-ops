@@ -4,7 +4,9 @@ const {
 
 const targetRepositories = process.env.RENOVATE_REPOSITORIES
   ? process.env.RENOVATE_REPOSITORIES.split(',').map((repo) => repo.trim()).filter(Boolean)
-  : managedRepositories;
+  : process.env.RENOVATE_RUN_ALL === 'true'
+    ? managedRepositories
+    : [];
 
 module.exports = {
   platform: 'github',

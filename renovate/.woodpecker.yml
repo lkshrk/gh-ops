@@ -11,4 +11,5 @@ steps:
       RENOVATE_CONFIG_FILE: renovate/config.js
       LOG_LEVEL: info
     commands:
+      - if [ -z "$RENOVATE_REPOSITORIES" ] && [ "$RENOVATE_RUN_ALL" != "true" ]; then echo "Set RENOVATE_REPOSITORIES for a targeted run or RENOVATE_RUN_ALL=true after target repo pipelines are removed."; exit 0; fi
       - renovate
