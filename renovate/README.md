@@ -34,14 +34,19 @@ repositories, set this for a full allowlist run:
 RENOVATE_RUN_ALL=true
 ```
 
-## Required Secret
+## Required Secrets
 
 Woodpecker must provide:
 
 - `renovate_token` - GitHub token or GitHub App installation token with write access to managed repositories
+- `dockerhub_username` - Docker Hub username for authenticated image metadata lookups
+- `dockerhub_password` - Docker Hub password or access token
 
 The token must be able to read repository contents, create branches, create pull
 requests, update issues, and read check status for repositories in the allowlist.
+
+Docker Hub credentials are used by Renovate `hostRules` for `docker.io` to avoid
+unauthenticated pull-rate limits during Docker datasource lookups.
 
 ## Repository Scope
 
