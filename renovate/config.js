@@ -36,8 +36,8 @@ const dockerPassword =
   process.env.DOCKERHUB_PASSWORD ||
   process.env.DOCKER_TOKEN;
 
-const ghcrTokenLkshrk = process.env.RENOVATE_GHCR_TOKEN_LKSHRK;
-const ghcrTokenWebdevHarke = process.env.RENOVATE_GHCR_TOKEN_WEBDEV_HARKE;
+const ghcrUsername = process.env.GHCR_USERNAME;
+const ghcrPassword = process.env.GHCR_PASSWORD;
 
 const hostRules = [
   ...(dockerUsername && dockerPassword
@@ -50,21 +50,13 @@ const hostRules = [
         },
       ]
     : []),
-  ...(ghcrTokenLkshrk
+  ...(ghcrUsername && ghcrPassword
     ? [
         {
           hostType: 'docker',
-          matchHost: 'https://ghcr.io/lkshrk',
-          token: ghcrTokenLkshrk,
-        },
-      ]
-    : []),
-  ...(ghcrTokenWebdevHarke
-    ? [
-        {
-          hostType: 'docker',
-          matchHost: 'https://ghcr.io/webdev-harke',
-          token: ghcrTokenWebdevHarke,
+          matchHost: 'ghcr.io',
+          username: ghcrUsername,
+          password: ghcrPassword,
         },
       ]
     : []),
