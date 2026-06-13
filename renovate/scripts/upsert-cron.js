@@ -4,7 +4,7 @@ const repoSlug = process.env.WOODPECKER_REPO || 'lkshrk/woodpecker-ops';
 const cronName = process.env.RENOVATE_CRON_NAME || 'renovate-daily';
 const schedule = process.env.RENOVATE_CRON_SCHEDULE || '@daily';
 const branch = process.env.RENOVATE_CRON_BRANCH || 'main';
-const timezone = process.env.RENOVATE_CRON_TIMEZONE || 'Europe/Berlin';
+const timezone = process.env.RENOVATE_CRON_TIMEZONE;
 
 if (!token) {
   throw new Error('WOODPECKER_TOKEN is required');
@@ -71,12 +71,14 @@ async function main() {
     name: cronName,
     branch,
     schedule,
-    timezone,
     enabled: true,
     variables: {
       RENOVATE_RUN_ALL: 'true',
     },
   };
+  if (timezone) {
+    payload.timezone = timezone;
+  }
 
   const existing = crons.find((cron) => cron.name === cronName);
   const result = existing
