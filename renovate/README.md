@@ -46,6 +46,8 @@ Woodpecker must provide:
 - `github_app_installation_id_webdev_harke` - installation id for the `webdev-harke` organization
 - `docker_user` - Docker Hub username for authenticated image metadata lookups
 - `docker_token` - Docker Hub password or access token
+- `ghcr_user` - GitHub username for GHCR image metadata lookups
+- `ghcr_token` - GitHub classic PAT with `read:packages` for GHCR image metadata lookups
 
 The GitHub App should be installed on both owners with access to the managed
 repositories. The pipeline exchanges the app credentials for short-lived
@@ -60,16 +62,16 @@ Recommended GitHub App repository permissions:
 - Metadata: read-only
 - Workflows: read/write if Renovate needs to update workflow files
 
-The pipeline also creates owner-specific GitHub App tokens for GHCR lookups and
-adds Docker host rules for `ghcr.io/lkshrk` and `ghcr.io/webdev-harke`. This is
-needed for cross-owner image references, for example when `lkshrk/h-cloud`
-references `ghcr.io/webdev-harke/*` images.
-
 Docker Hub credentials are used by Renovate `hostRules` for `docker.io` to avoid
 unauthenticated pull-rate limits during Docker datasource lookups.
 The pipeline maps `docker_user` / `docker_token` to both `DOCKERHUB_*` and
 `RENOVATE_DOCKER_*` environment variables. Full allowlist runs fail fast if the
 Docker Hub credentials are missing.
+
+GHCR credentials are used by Renovate `hostRules` for `ghcr.io`. GitHub Packages
+container registry authentication uses a classic PAT with `read:packages`; GitHub
+App installation tokens are still used for repository and pull request access,
+but not for GHCR package metadata lookups.
 
 ## Repository Scope
 
