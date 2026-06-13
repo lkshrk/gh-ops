@@ -46,8 +46,8 @@ Woodpecker must provide:
 - `github_app_installation_id_webdev_harke` - installation id for the `webdev-harke` organization
 - `docker_user` - Docker Hub username for authenticated image metadata lookups
 - `docker_token` - Docker Hub password or access token
-- `ghcr_user` - GitHub username for GHCR image metadata lookups
-- `ghcr_token` - GitHub classic PAT with `read:packages` for GHCR image metadata lookups
+- `perso_user` - GitHub username for GHCR image metadata lookups
+- `perso_token` - GitHub classic PAT with `read:packages` for GHCR image metadata lookups
 
 The GitHub App should be installed on both owners with access to the managed
 repositories. The pipeline exchanges the app credentials for short-lived
