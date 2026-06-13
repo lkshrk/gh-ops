@@ -45,7 +45,8 @@ The first managed scope includes:
 
 Repos in `manualReviewRepositories` are intentionally not part of the runner yet.
 Each one must be inspected and either migrated to a shared preset or documented
-as intentionally skipped.
+as intentionally skipped. Repos in `skippedRepositories` were inspected and had
+no supported dependency manifests or no Git tree at the time of migration.
 
 ## Shared Presets
 

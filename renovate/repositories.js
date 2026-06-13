@@ -24,6 +24,7 @@ const managedRepositories = [
   'lkshrk/onWB',
   'lkshrk/hammerspoon-ultrawide',
   'lkshrk/civora-web',
+  'lkshrk/dotfiles',
   'lkshrk/challenge-demo',
   'lkshrk/Easy-Web-GPG',
   'lkshrk/sonarr-season-reminder',
@@ -39,7 +40,6 @@ const managedRepositories = [
 const manualReviewRepositories = [
   'lkshrk/agent-marketplace',
   'lkshrk/homebrew-tap',
-  'lkshrk/dotfiles',
   'lkshrk/civora-admin-web',
   'lkshrk/meshcloud_teaser',
   'lkshrk/DecideIt',
@@ -52,7 +52,26 @@ const manualReviewRepositories = [
   'lkshrk/ChallengeMe',
 ];
 
+const skippedRepositories = [
+  // No supported dependency manifests found in recursive tree scan.
+  'lkshrk/agent-marketplace',
+  'lkshrk/homebrew-tap',
+  'lkshrk/meshcloud_teaser',
+  'lkshrk/DecideIt',
+  'lkshrk/h-cloud-secrets',
+  'lkshrk/lkshrk',
+  'lkshrk/Excel_Project_Reporting_Tool',
+  'lkshrk/ChallengeMe',
+
+  // Empty repositories.
+  'lkshrk/civora-admin-web',
+  'lkshrk/KAM',
+  'lkshrk/llmctl',
+  'lkshrk/klausis-cooldown-manager',
+];
+
 module.exports = {
   managedRepositories,
   manualReviewRepositories,
+  skippedRepositories,
 };
