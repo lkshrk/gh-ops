@@ -26,6 +26,8 @@ RENOVATE_REPOSITORIES=lkshrk/example-repo
 ```
 
 Multiple repositories can be comma-separated.
+If the list contains both owners, each Woodpecker step filters the list to the
+repositories its owner-scoped token can access.
 
 After old repo-local Renovate pipelines have been removed from target
 repositories, set this for a full allowlist run:
@@ -38,15 +40,31 @@ RENOVATE_RUN_ALL=true
 
 Woodpecker must provide:
 
-- `renovate_token` - GitHub token or GitHub App installation token with write access to managed repositories
-- `dockerhub_username` - Docker Hub username for authenticated image metadata lookups
-- `dockerhub_password` - Docker Hub password or access token
+- `github_app_id` - GitHub App id
+- `github_app_private_key_b64` - base64-encoded GitHub App private key
+- `github_app_installation_id_lkshrk` - installation id for the `lkshrk` account
+- `github_app_installation_id_webdev_harke` - installation id for the `webdev-harke` organization
+- `docker_user` - Docker Hub username for authenticated image metadata lookups
+- `docker_token` - Docker Hub password or access token
 
-The token must be able to read repository contents, create branches, create pull
-requests, update issues, and read check status for repositories in the allowlist.
+The GitHub App should be installed on both owners with access to the managed
+repositories. The pipeline exchanges the app credentials for short-lived
+installation tokens per owner before running Renovate.
+
+Recommended GitHub App repository permissions:
+
+- Contents: read/write
+- Pull requests: read/write
+- Issues: read/write
+- Commit statuses: read/write
+- Metadata: read-only
+- Workflows: read/write if Renovate needs to update workflow files
 
 Docker Hub credentials are used by Renovate `hostRules` for `docker.io` to avoid
 unauthenticated pull-rate limits during Docker datasource lookups.
+The pipeline maps `docker_user` / `docker_token` to both `DOCKERHUB_*` and
+`RENOVATE_DOCKER_*` environment variables. Full allowlist runs fail fast if the
+Docker Hub credentials are missing.
 
 ## Repository Scope
 

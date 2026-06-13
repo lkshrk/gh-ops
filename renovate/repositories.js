@@ -1,10 +1,12 @@
-const managedRepositories = [
+const webdevHarkeRepositories = [
   'webdev-harke/pfalz-herz',
   'webdev-harke/ISC',
   'webdev-harke/pizzeria-riva',
   'webdev-harke/quintessenz-horst',
   'webdev-harke/portfolio',
+];
 
+const lkshrkRepositories = [
   'lkshrk/civora-monorepo',
   'lkshrk/h-cloud',
   'lkshrk/directus-extension-reply-to-mail',
@@ -35,6 +37,11 @@ const managedRepositories = [
   'lkshrk/home-assistant-openplantbook',
   'lkshrk/homeassistant-plant',
   'lkshrk/hass-core',
+];
+
+const managedRepositories = [
+  ...webdevHarkeRepositories,
+  ...lkshrkRepositories,
 ];
 
 const manualReviewRepositories = [
@@ -71,6 +78,8 @@ const skippedRepositories = [
 ];
 
 module.exports = {
+  webdevHarkeRepositories,
+  lkshrkRepositories,
   managedRepositories,
   manualReviewRepositories,
   skippedRepositories,

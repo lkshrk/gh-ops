@@ -3,17 +3,56 @@ when:
   - event: manual
 
 steps:
-  renovate:
+  renovate_webdev_harke:
     image: renovate/renovate:latest
     environment:
-      RENOVATE_TOKEN:
-        from_secret: renovate_token
+      GITHUB_APP_ID:
+        from_secret: github_app_id
+      GITHUB_APP_PRIVATE_KEY_B64:
+        from_secret: github_app_private_key_b64
+      GITHUB_APP_INSTALLATION_ID:
+        from_secret: github_app_installation_id_webdev_harke
+      RENOVATE_REPOSITORY_OWNER: webdev-harke
       DOCKERHUB_USERNAME:
         from_secret: docker_user
       DOCKERHUB_PASSWORD:
+        from_secret: docker_token
+      RENOVATE_DOCKER_USERNAME:
+        from_secret: docker_user
+      RENOVATE_DOCKER_PASSWORD:
         from_secret: docker_token
       RENOVATE_CONFIG_FILE: renovate/config.js
       LOG_LEVEL: info
     commands:
       - if [ -z "$RENOVATE_REPOSITORIES" ] && [ "$RENOVATE_RUN_ALL" != "true" ]; then echo "Set RENOVATE_REPOSITORIES for a targeted run or RENOVATE_RUN_ALL=true after target repo pipelines are removed."; exit 0; fi
+      - if [ -n "$RENOVATE_REPOSITORIES" ] && ! printf '%s' "$RENOVATE_REPOSITORIES" | tr ',' '\n' | grep -q "^$RENOVATE_REPOSITORY_OWNER/"; then echo "No $RENOVATE_REPOSITORY_OWNER repositories requested."; exit 0; fi
+      - if [ "$RENOVATE_RUN_ALL" = "true" ] && { [ -z "$RENOVATE_DOCKER_USERNAME" ] || [ -z "$RENOVATE_DOCKER_PASSWORD" ]; }; then echo "Set Woodpecker secrets docker_user and docker_token before full Renovate runs."; exit 1; fi
+      - export RENOVATE_TOKEN="$(node renovate/github-app-token.js)"
+      - renovate
+
+  renovate_lkshrk:
+    image: renovate/renovate:latest
+    environment:
+      GITHUB_APP_ID:
+        from_secret: github_app_id
+      GITHUB_APP_PRIVATE_KEY_B64:
+        from_secret: github_app_private_key_b64
+      GITHUB_APP_INSTALLATION_ID:
+        from_secret: github_app_installation_id_lkshrk
+      RENOVATE_REPOSITORY_OWNER: lkshrk
+      DOCKERHUB_USERNAME:
+        from_secret: docker_user
+      DOCKERHUB_PASSWORD:
+        from_secret: docker_token
+      RENOVATE_DOCKER_USERNAME:
+        from_secret: docker_user
+      RENOVATE_DOCKER_PASSWORD:
+        from_secret: docker_token
+      RENOVATE_CONFIG_FILE: renovate/config.js
+      LOG_LEVEL: info
+    commands:
+      - if [ -z "$RENOVATE_REPOSITORIES" ] && [ "$RENOVATE_RUN_ALL" != "true" ]; then echo "Set RENOVATE_REPOSITORIES for a targeted run or RENOVATE_RUN_ALL=true after target repo pipelines are removed."; exit 0; fi
+      - if [ -n "$RENOVATE_REPOSITORIES" ] && ! printf '%s' "$RENOVATE_REPOSITORIES" | tr ',' '\n' | grep -q "^$RENOVATE_REPOSITORY_OWNER/"; then echo "No $RENOVATE_REPOSITORY_OWNER repositories requested."; exit 0; fi
+      - if [ "$RENOVATE_RUN_ALL" = "true" ] && { [ -z "$RENOVATE_DOCKER_USERNAME" ] || [ -z "$RENOVATE_DOCKER_PASSWORD" ]; }; then echo "Set Woodpecker secrets docker_user and docker_token before full Renovate runs."; exit 1; fi
+      - export RENOVATE_TOKEN="$(node renovate/github-app-token.js)"
       - renovate

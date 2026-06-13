@@ -1,21 +1,49 @@
 const {
+  webdevHarkeRepositories,
+  lkshrkRepositories,
   managedRepositories,
 } = require('./repositories');
 
-const targetRepositories = process.env.RENOVATE_REPOSITORIES
+const repositoryOwner = process.env.RENOVATE_REPOSITORY_OWNER;
+
+const repositoriesForOwner = (() => {
+  switch (repositoryOwner) {
+    case 'webdev-harke':
+      return webdevHarkeRepositories;
+    case 'lkshrk':
+      return lkshrkRepositories;
+    default:
+      return managedRepositories;
+  }
+})();
+
+const explicitRepositories = process.env.RENOVATE_REPOSITORIES
   ? process.env.RENOVATE_REPOSITORIES.split(',').map((repo) => repo.trim()).filter(Boolean)
+  : [];
+
+const targetRepositories = explicitRepositories.length
+  ? explicitRepositories.filter((repo) => !repositoryOwner || repo.startsWith(`${repositoryOwner}/`))
   : process.env.RENOVATE_RUN_ALL === 'true'
-    ? managedRepositories
+    ? repositoriesForOwner
     : [];
 
+const dockerUsername =
+  process.env.RENOVATE_DOCKER_USERNAME ||
+  process.env.DOCKERHUB_USERNAME ||
+  process.env.DOCKER_USER;
+const dockerPassword =
+  process.env.RENOVATE_DOCKER_PASSWORD ||
+  process.env.DOCKERHUB_PASSWORD ||
+  process.env.DOCKER_TOKEN;
+
 const hostRules = [
-  ...(process.env.DOCKERHUB_USERNAME && process.env.DOCKERHUB_PASSWORD
+  ...(dockerUsername && dockerPassword
     ? [
         {
           hostType: 'docker',
           matchHost: 'docker.io',
-          username: process.env.DOCKERHUB_USERNAME,
-          password: process.env.DOCKERHUB_PASSWORD,
+          username: dockerUsername,
+          password: dockerPassword,
         },
       ]
     : []),
