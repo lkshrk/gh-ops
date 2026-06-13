@@ -1,39 +1,29 @@
+const {
+  managedRepositories,
+} = require('./repositories');
+
+const targetRepositories = process.env.RENOVATE_REPOSITORIES
+  ? process.env.RENOVATE_REPOSITORIES.split(',').map((repo) => repo.trim()).filter(Boolean)
+  : process.env.RENOVATE_RUN_ALL === 'true'
+    ? managedRepositories
+    : [];
+
 module.exports = {
   platform: 'github',
-  token: process.env.RENOVATE_TOKEN,
+  ...(process.env.RENOVATE_TOKEN ? { token: process.env.RENOVATE_TOKEN } : {}),
 
-  autodiscover: true,
-  autodiscoverFilter: [
-    'lkshrk/civora-backend',
-    'lkshrk/civora-web',
-    'lkshrk/civora-spec',
-  ],
+  repositories: targetRepositories,
+  onboarding: false,
+  requireConfig: 'required',
 
-  onboarding: true,
-  requireConfig: 'optional',
-
-  extends: ['config:recommended'],
-
+  gitAuthor: 'Renovate Bot <bot@renovateapp.com>',
   dependencyDashboard: true,
+  dependencyDashboardTitle: 'Renovate Dashboard',
 
-  automerge: true,
-  automergeType: 'pr',
-  platformAutomerge: true,
-
-  packageRules: [
-    {
-      matchUpdateTypes: ['patch', 'minor', 'pin', 'digest'],
-      groupName: 'minor and patch dependencies',
-      automerge: true
-    },
-    {
-      matchUpdateTypes: ['major'],
-      automerge: false
-    }
-  ],
-
-  prHourlyLimit: 20,
+  prHourlyLimit: 5,
   prConcurrentLimit: 10,
+  timezone: 'Europe/Berlin',
 
-  timezone: 'Europe/Berlin'
-}
+  // Repository behavior belongs in repo-local config via shared presets.
+  // This central file owns execution scope, credentials, and run limits.
+};

@@ -9,7 +9,7 @@ steps:
       RENOVATE_TOKEN:
         from_secret: renovate_token
       RENOVATE_CONFIG_FILE: renovate/config.js
-      GITHUB_TOKEN:
-        from_secret: github_token
+      LOG_LEVEL: info
     commands:
+      - if [ -z "$RENOVATE_REPOSITORIES" ] && [ "$RENOVATE_RUN_ALL" != "true" ]; then echo "Set RENOVATE_REPOSITORIES for a targeted run or RENOVATE_RUN_ALL=true after target repo pipelines are removed."; exit 0; fi
       - renovate
