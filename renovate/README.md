@@ -40,7 +40,7 @@ RENOVATE_RUN_ALL=true
 
 Woodpecker must provide:
 
-- `github_app_id` - GitHub App id
+- `github_app_id` - GitHub App client id, preferred for JWT issuer, or app id
 - `github_app_private_key_b64` - base64-encoded GitHub App private key
 - `github_app_installation_id_lkshrk` - installation id for the `lkshrk` account
 - `github_app_installation_id_webdev_harke` - installation id for the `webdev-harke` organization
@@ -59,6 +59,11 @@ Recommended GitHub App repository permissions:
 - Commit statuses: read/write
 - Metadata: read-only
 - Workflows: read/write if Renovate needs to update workflow files
+
+The pipeline also creates owner-specific GitHub App tokens for GHCR lookups and
+adds Docker host rules for `ghcr.io/lkshrk` and `ghcr.io/webdev-harke`. This is
+needed for cross-owner image references, for example when `lkshrk/h-cloud`
+references `ghcr.io/webdev-harke/*` images.
 
 Docker Hub credentials are used by Renovate `hostRules` for `docker.io` to avoid
 unauthenticated pull-rate limits during Docker datasource lookups.

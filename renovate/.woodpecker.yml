@@ -12,6 +12,10 @@ steps:
         from_secret: github_app_private_key_b64
       GITHUB_APP_INSTALLATION_ID:
         from_secret: github_app_installation_id_webdev_harke
+      GITHUB_APP_INSTALLATION_ID_LKSHRK:
+        from_secret: github_app_installation_id_lkshrk
+      GITHUB_APP_INSTALLATION_ID_WEBDEV_HARKE:
+        from_secret: github_app_installation_id_webdev_harke
       RENOVATE_REPOSITORY_OWNER: webdev-harke
       DOCKERHUB_USERNAME:
         from_secret: docker_user
@@ -28,6 +32,8 @@ steps:
       - if [ -n "$RENOVATE_REPOSITORIES" ] && ! printf '%s' "$RENOVATE_REPOSITORIES" | tr ',' '\n' | grep -q "^$RENOVATE_REPOSITORY_OWNER/"; then echo "No $RENOVATE_REPOSITORY_OWNER repositories requested."; exit 0; fi
       - if [ "$RENOVATE_RUN_ALL" = "true" ] && { [ -z "$RENOVATE_DOCKER_USERNAME" ] || [ -z "$RENOVATE_DOCKER_PASSWORD" ]; }; then echo "Set Woodpecker secrets docker_user and docker_token before full Renovate runs."; exit 1; fi
       - export RENOVATE_TOKEN="$(node renovate/github-app-token.js)"
+      - export RENOVATE_GHCR_TOKEN_LKSHRK="$(node renovate/github-app-token.js "$GITHUB_APP_INSTALLATION_ID_LKSHRK")"
+      - export RENOVATE_GHCR_TOKEN_WEBDEV_HARKE="$(node renovate/github-app-token.js "$GITHUB_APP_INSTALLATION_ID_WEBDEV_HARKE")"
       - renovate
 
   renovate_lkshrk:
@@ -39,6 +45,10 @@ steps:
         from_secret: github_app_private_key_b64
       GITHUB_APP_INSTALLATION_ID:
         from_secret: github_app_installation_id_lkshrk
+      GITHUB_APP_INSTALLATION_ID_LKSHRK:
+        from_secret: github_app_installation_id_lkshrk
+      GITHUB_APP_INSTALLATION_ID_WEBDEV_HARKE:
+        from_secret: github_app_installation_id_webdev_harke
       RENOVATE_REPOSITORY_OWNER: lkshrk
       DOCKERHUB_USERNAME:
         from_secret: docker_user
@@ -55,4 +65,6 @@ steps:
       - if [ -n "$RENOVATE_REPOSITORIES" ] && ! printf '%s' "$RENOVATE_REPOSITORIES" | tr ',' '\n' | grep -q "^$RENOVATE_REPOSITORY_OWNER/"; then echo "No $RENOVATE_REPOSITORY_OWNER repositories requested."; exit 0; fi
       - if [ "$RENOVATE_RUN_ALL" = "true" ] && { [ -z "$RENOVATE_DOCKER_USERNAME" ] || [ -z "$RENOVATE_DOCKER_PASSWORD" ]; }; then echo "Set Woodpecker secrets docker_user and docker_token before full Renovate runs."; exit 1; fi
       - export RENOVATE_TOKEN="$(node renovate/github-app-token.js)"
+      - export RENOVATE_GHCR_TOKEN_LKSHRK="$(node renovate/github-app-token.js "$GITHUB_APP_INSTALLATION_ID_LKSHRK")"
+      - export RENOVATE_GHCR_TOKEN_WEBDEV_HARKE="$(node renovate/github-app-token.js "$GITHUB_APP_INSTALLATION_ID_WEBDEV_HARKE")"
       - renovate

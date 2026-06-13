@@ -1,7 +1,7 @@
 const crypto = require('node:crypto');
 
 const installationId = process.argv[2] || process.env.GITHUB_APP_INSTALLATION_ID;
-const appId = process.env.GITHUB_APP_ID;
+const appIssuer = process.env.GITHUB_APP_CLIENT_ID || process.env.GITHUB_APP_ID;
 const privateKey =
   process.env.GITHUB_APP_PRIVATE_KEY ||
   (process.env.GITHUB_APP_PRIVATE_KEY_B64
@@ -22,7 +22,7 @@ function createJwt() {
   const payload = {
     iat: now - 60,
     exp: now + 540,
-    iss: appId,
+    iss: appIssuer,
   };
   const unsigned = `${base64url(JSON.stringify(header))}.${base64url(JSON.stringify(payload))}`;
   const signature = crypto
@@ -34,8 +34,8 @@ function createJwt() {
 }
 
 async function main() {
-  if (!appId) {
-    throw new Error('GITHUB_APP_ID is required');
+  if (!appIssuer) {
+    throw new Error('GITHUB_APP_CLIENT_ID or GITHUB_APP_ID is required');
   }
   if (!privateKey) {
     throw new Error('GITHUB_APP_PRIVATE_KEY_B64 or GITHUB_APP_PRIVATE_KEY is required');
