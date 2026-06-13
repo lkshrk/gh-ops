@@ -9,7 +9,6 @@ steps:
       RENOVATE_TOKEN:
         from_secret: renovate_token
       RENOVATE_CONFIG_FILE: renovate/config.js
-      GITHUB_TOKEN:
-        from_secret: github_token
+      LOG_LEVEL: info
     commands:
       - renovate
