@@ -1,5 +1,6 @@
 const http = require('node:http');
 const {
+  buildBridgeLogEntry,
   resolveTrigger,
   triggerWoodpecker,
   verifyGitHubSignature,
@@ -26,21 +27,34 @@ function sendJson(response, status, body) {
   response.end(JSON.stringify(body));
 }
 
+function logBridgeEvent(outcome, details) {
+  console.log(JSON.stringify(buildBridgeLogEntry(outcome, details)));
+}
+
 async function handleWebhook(request, response) {
   const rawBody = await readBody(request);
   const signature = request.headers['x-hub-signature-256'];
+  const event = request.headers['x-github-event'];
+  const delivery = request.headers['x-github-delivery'];
 
   if (!verifyGitHubSignature(webhookSecret, rawBody, signature)) {
+    logBridgeEvent('invalid_signature', { delivery, event, reason: 'invalid signature' });
     sendJson(response, 401, { ok: false, error: 'invalid signature' });
     return;
   }
 
-  const event = request.headers['x-github-event'];
-  const delivery = request.headers['x-github-delivery'];
   const payload = JSON.parse(rawBody.toString('utf8'));
   const trigger = resolveTrigger(event, payload);
+  const logDetails = {
+    delivery,
+    event,
+    action: payload.action,
+    repository: trigger.repository || (payload.repository && payload.repository.full_name),
+    reason: trigger.reason,
+  };
 
   if (!trigger.shouldTrigger) {
+    logBridgeEvent('ignored', logDetails);
     sendJson(response, 202, {
       ok: true,
       triggered: false,
@@ -51,6 +65,7 @@ async function handleWebhook(request, response) {
   }
 
   if (dryRun) {
+    logBridgeEvent('dry_run', logDetails);
     sendJson(response, 202, {
       ok: true,
       triggered: false,
@@ -63,6 +78,7 @@ async function handleWebhook(request, response) {
   }
 
   const pipeline = await triggerWoodpecker(trigger.repository);
+  logBridgeEvent('triggered', { ...logDetails, pipeline });
   sendJson(response, 202, {
     ok: true,
     triggered: true,
@@ -91,7 +107,7 @@ const server = http.createServer(async (request, response) => {
 
     sendJson(response, 404, { ok: false, error: 'not found' });
   } catch (error) {
-    console.error(error);
+    console.error(JSON.stringify(buildBridgeLogEntry('error', { error: error.message })));
     sendJson(response, 500, { ok: false, error: error.message });
   }
 });

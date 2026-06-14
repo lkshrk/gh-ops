@@ -103,6 +103,30 @@ function resolveTrigger(event, payload) {
   };
 }
 
+function buildBridgeLogEntry(outcome, details = {}) {
+  const entry = {
+    component: 'renovate-trigger-bridge',
+    outcome,
+  };
+
+  for (const key of ['delivery', 'event', 'action', 'repository', 'reason', 'error']) {
+    if (details[key]) {
+      entry[key] = details[key];
+    }
+  }
+
+  if (details.pipeline) {
+    if (details.pipeline.number !== undefined) {
+      entry.pipelineNumber = details.pipeline.number;
+    }
+    if (details.pipeline.status) {
+      entry.pipelineStatus = details.pipeline.status;
+    }
+  }
+
+  return entry;
+}
+
 async function triggerWoodpecker(repository, options = {}) {
   const apiUrl = (options.apiUrl || process.env.WOODPECKER_API_URL || 'https://ci.h-cloud.io/api').replace(/\/$/, '');
   const token = options.token || process.env.WOODPECKER_TOKEN;
@@ -135,6 +159,7 @@ async function triggerWoodpecker(repository, options = {}) {
 }
 
 module.exports = {
+  buildBridgeLogEntry,
   hasRenovateTriggerCheckbox,
   resolveTrigger,
   triggerWoodpecker,

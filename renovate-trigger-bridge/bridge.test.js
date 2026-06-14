@@ -5,6 +5,7 @@ const {
   hasRenovateTriggerCheckbox,
   resolveTrigger,
   verifyGitHubSignature,
+  buildBridgeLogEntry,
 } = require('./bridge');
 
 test('detects checked Renovate trigger checkboxes', () => {
@@ -89,4 +90,30 @@ test('verifies GitHub webhook signatures', () => {
 
   assert.equal(verifyGitHubSignature(secret, body, signature), true);
   assert.equal(verifyGitHubSignature(secret, body, 'sha256=bad'), false);
+});
+
+test('builds structured bridge log entries without secrets or raw bodies', () => {
+  assert.deepEqual(
+    buildBridgeLogEntry('triggered', {
+      delivery: 'delivery-1',
+      event: 'issues',
+      action: 'edited',
+      repository: 'lkshrk/h-cloud',
+      reason: 'issues.edited',
+      pipeline: { number: 15, status: 'pending' },
+      token: 'secret-token',
+      rawBody: '- [x] run renovate',
+    }),
+    {
+      component: 'renovate-trigger-bridge',
+      outcome: 'triggered',
+      delivery: 'delivery-1',
+      event: 'issues',
+      action: 'edited',
+      repository: 'lkshrk/h-cloud',
+      reason: 'issues.edited',
+      pipelineNumber: 15,
+      pipelineStatus: 'pending',
+    },
+  );
 });

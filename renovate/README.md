@@ -135,7 +135,7 @@ Use these repo-local configs:
 - no global `ignoreTests`
 - repo-specific exceptions stay in the target repo config
 
-## Future GitHub App Bridge
+## GitHub App Trigger Bridge
 
 The trigger bridge in `renovate-trigger-bridge/` receives GitHub webhooks,
 verifies the GitHub webhook signature, checks that the repository is managed,
@@ -171,6 +171,19 @@ Bridge environment:
 - `PORT` - defaults to `3000`
 - `RENOVATE_BRIDGE_DRY_RUN=true` - verify webhook handling without triggering CI
 
+Bridge logs are one JSON object per relevant webhook outcome. They include the
+delivery id, GitHub event, action, repository, reason, and pipeline metadata
+when a Woodpecker run is created. Secrets and raw webhook bodies are never
+logged.
+
+Log outcomes:
+
+- `invalid_signature` - rejected before parsing the webhook body
+- `ignored` - valid webhook, but event/action/repository/checkbox did not match
+- `dry_run` - valid trigger while `RENOVATE_BRIDGE_DRY_RUN=true`
+- `triggered` - targeted Woodpecker pipeline was created
+- `error` - unexpected request handling error
+
 Configure the GitHub App webhook URL to:
 
 ```text
@@ -178,3 +191,29 @@ https://<bridge-host>/github-webhook
 ```
 
 Subscribe to `Issues`, `Pull request`, and `Issue comment` events.
+
+### Rotating Bridge Secrets
+
+Rotate `WOODPECKER_TOKEN`:
+
+1. Create a new Woodpecker API token for a user that can manually trigger
+   pipelines on `lkshrk/woodpecker-ops`.
+2. Replace `WOODPECKER_TOKEN` in the h-cloud SOPS secret
+   `kubernetes/apps/woodpecker/renovate-trigger-bridge/app/renovate-trigger-bridge-secret.sops.yaml`.
+3. Commit and push the encrypted secret change to h-cloud.
+4. After Flux rolls out the secret, trigger a managed repository checkbox or send
+   a signed smoke webhook and confirm a targeted Woodpecker pipeline is created.
+5. Revoke the old Woodpecker token.
+
+Rotate `GITHUB_WEBHOOK_SECRET`:
+
+1. Generate a new random webhook secret.
+2. Replace `GITHUB_WEBHOOK_SECRET` in the same h-cloud SOPS secret.
+3. Update the GitHub App webhook secret to the same value.
+4. Commit and push the encrypted secret change to h-cloud.
+5. After Flux rolls out the secret, send a signed smoke webhook and confirm the
+   bridge accepts it.
+
+During webhook secret rotation, update GitHub and h-cloud close together. GitHub
+uses only the current secret, so webhooks signed with the old value will be
+rejected after the bridge rolls out the new value.
