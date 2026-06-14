@@ -6,6 +6,7 @@ const {
   resolveTrigger,
   verifyGitHubSignature,
   buildBridgeLogEntry,
+  createDeliveryDeduper,
 } = require('./bridge');
 
 test('detects checked Renovate trigger checkboxes', () => {
@@ -116,4 +117,17 @@ test('builds structured bridge log entries without secrets or raw bodies', () =>
       pipelineStatus: 'pending',
     },
   );
+});
+
+test('deduplicates GitHub delivery ids until the retention window expires', () => {
+  let now = 1000;
+  const deduper = createDeliveryDeduper({ ttlMs: 5000, now: () => now });
+
+  assert.equal(deduper.check('delivery-1'), false);
+  assert.equal(deduper.check('delivery-1'), true);
+  assert.equal(deduper.check('delivery-2'), false);
+
+  now = 7001;
+
+  assert.equal(deduper.check('delivery-1'), false);
 });

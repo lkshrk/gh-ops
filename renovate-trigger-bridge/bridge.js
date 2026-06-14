@@ -127,6 +127,38 @@ function buildBridgeLogEntry(outcome, details = {}) {
   return entry;
 }
 
+function createDeliveryDeduper(options = {}) {
+  const ttlMs = options.ttlMs || 60 * 60 * 1000;
+  const now = options.now || Date.now;
+  const seenDeliveries = new Map();
+
+  function prune(currentTime) {
+    for (const [delivery, timestamp] of seenDeliveries) {
+      if (currentTime - timestamp > ttlMs) {
+        seenDeliveries.delete(delivery);
+      }
+    }
+  }
+
+  return {
+    check(delivery) {
+      if (!delivery) {
+        return false;
+      }
+
+      const currentTime = now();
+      prune(currentTime);
+
+      if (seenDeliveries.has(delivery)) {
+        return true;
+      }
+
+      seenDeliveries.set(delivery, currentTime);
+      return false;
+    },
+  };
+}
+
 async function triggerWoodpecker(repository, options = {}) {
   const apiUrl = (options.apiUrl || process.env.WOODPECKER_API_URL || 'https://ci.h-cloud.io/api').replace(/\/$/, '');
   const token = options.token || process.env.WOODPECKER_TOKEN;
@@ -160,6 +192,7 @@ async function triggerWoodpecker(repository, options = {}) {
 
 module.exports = {
   buildBridgeLogEntry,
+  createDeliveryDeduper,
   hasRenovateTriggerCheckbox,
   resolveTrigger,
   triggerWoodpecker,

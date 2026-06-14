@@ -170,6 +170,8 @@ Bridge environment:
 - `WOODPECKER_BRANCH` - defaults to `main`
 - `PORT` - defaults to `3000`
 - `RENOVATE_BRIDGE_DRY_RUN=true` - verify webhook handling without triggering CI
+- `RENOVATE_BRIDGE_DELIVERY_TTL_MS` - duplicate GitHub delivery retention window,
+  defaults to 1 hour
 
 Bridge logs are one JSON object per relevant webhook outcome. They include the
 delivery id, GitHub event, action, repository, reason, and pipeline metadata
@@ -180,9 +182,14 @@ Log outcomes:
 
 - `invalid_signature` - rejected before parsing the webhook body
 - `ignored` - valid webhook, but event/action/repository/checkbox did not match
+- `duplicate` - valid trigger skipped because the GitHub delivery id was already processed
 - `dry_run` - valid trigger while `RENOVATE_BRIDGE_DRY_RUN=true`
 - `triggered` - targeted Woodpecker pipeline was created
 - `error` - unexpected request handling error
+
+The duplicate guard is in-memory and keyed by the `X-GitHub-Delivery` id. It is
+meant to suppress GitHub redeliveries for the same webhook while the bridge pod
+is running.
 
 Configure the GitHub App webhook URL to:
 
@@ -191,6 +198,29 @@ https://<bridge-host>/github-webhook
 ```
 
 Subscribe to `Issues`, `Pull request`, and `Issue comment` events.
+
+### Operating the Bridge
+
+Trigger Renovate manually from a managed issue, pull request, or issue comment:
+
+```md
+- [x] run renovate
+```
+
+The bridge starts a Woodpecker manual pipeline with
+`RENOVATE_REPOSITORIES=owner/repo`. In h-cloud, inspect bridge logs with:
+
+```sh
+kubectl -n woodpecker logs deploy/renovate-trigger-bridge
+```
+
+The deployed app exposes:
+
+```text
+https://renovate-bridge.h-cloud.io/healthz
+```
+
+The Woodpecker pipeline runs in `lkshrk/woodpecker-ops`, repo id `13`.
 
 ### Rotating Bridge Secrets
 

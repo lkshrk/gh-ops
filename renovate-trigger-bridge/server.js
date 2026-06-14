@@ -1,6 +1,7 @@
 const http = require('node:http');
 const {
   buildBridgeLogEntry,
+  createDeliveryDeduper,
   resolveTrigger,
   triggerWoodpecker,
   verifyGitHubSignature,
@@ -9,6 +10,9 @@ const {
 const port = Number(process.env.PORT || 3000);
 const webhookSecret = process.env.GITHUB_WEBHOOK_SECRET;
 const dryRun = process.env.RENOVATE_BRIDGE_DRY_RUN === 'true';
+const deliveryDeduper = createDeliveryDeduper({
+  ttlMs: Number(process.env.RENOVATE_BRIDGE_DELIVERY_TTL_MS || 60 * 60 * 1000),
+});
 
 function readBody(request) {
   return new Promise((resolve, reject) => {
@@ -59,6 +63,19 @@ async function handleWebhook(request, response) {
       ok: true,
       triggered: false,
       reason: trigger.reason,
+      delivery,
+    });
+    return;
+  }
+
+  if (deliveryDeduper.check(delivery)) {
+    logBridgeEvent('duplicate', logDetails);
+    sendJson(response, 202, {
+      ok: true,
+      triggered: false,
+      duplicate: true,
+      repository: trigger.repository,
+      reason: 'duplicate delivery',
       delivery,
     });
     return;
