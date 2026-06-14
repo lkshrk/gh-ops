@@ -7,7 +7,7 @@ when:
 
 steps:
   semantic_release:
-    image: node:22-alpine
+    image: node:26-alpine
     environment:
       GH_TOKEN:
         from_secret: perso_token
