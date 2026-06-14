@@ -9,6 +9,9 @@ const checkboxPatterns = [
   /^\s*[-*]\s+\[x]\s+(?:run\s+)?renovate\b/i,
   /^\s*[-*]\s+\[x]\s+trigger\s+renovate\b/i,
   /^\s*[-*]\s+\[x]\s+rerun\s+renovate\b/i,
+  // Renovate Dependency Dashboard checkboxes: checked box followed by a hidden
+  // HTML-comment marker, e.g. `- [x] <!-- rebase-all-open-prs -->...`.
+  /^\s*[-*]\s+\[x]\s*<!--/i,
 ];
 
 function verifyGitHubSignature(secret, rawBody, signatureHeader) {
@@ -30,10 +33,15 @@ function verifyGitHubSignature(secret, rawBody, signatureHeader) {
   return actual.length === expectedBuffer.length && crypto.timingSafeEqual(actual, expectedBuffer);
 }
 
-function hasRenovateTriggerCheckbox(text) {
+function triggerCheckboxLines(text) {
   return String(text || '')
     .split(/\r?\n/)
-    .some((line) => checkboxPatterns.some((pattern) => pattern.test(line)));
+    .filter((line) => checkboxPatterns.some((pattern) => pattern.test(line)))
+    .map((line) => line.trim());
+}
+
+function hasRenovateTriggerCheckbox(text) {
+  return triggerCheckboxLines(text).length > 0;
 }
 
 function repositoryFromPayload(payload) {
@@ -61,8 +69,8 @@ function previousBodyFromPayload(payload) {
 }
 
 function hasNewTriggerCheckbox(event, payload) {
-  const currentBody = bodyFromPayload(event, payload);
-  if (!hasRenovateTriggerCheckbox(currentBody)) {
+  const currentLines = triggerCheckboxLines(bodyFromPayload(event, payload));
+  if (currentLines.length === 0) {
     return false;
   }
 
@@ -71,7 +79,12 @@ function hasNewTriggerCheckbox(event, payload) {
   }
 
   const previousBody = previousBodyFromPayload(payload);
-  return previousBody === undefined || !hasRenovateTriggerCheckbox(previousBody);
+  if (previousBody === undefined) {
+    return true;
+  }
+
+  const previousChecked = new Set(triggerCheckboxLines(previousBody));
+  return currentLines.some((line) => !previousChecked.has(line));
 }
 
 function resolveTrigger(event, payload) {

@@ -17,6 +17,33 @@ test('detects checked Renovate trigger checkboxes', () => {
   assert.equal(hasRenovateTriggerCheckbox('run renovate'), false);
 });
 
+test('detects checked Renovate Dependency Dashboard marker checkboxes', () => {
+  assert.equal(hasRenovateTriggerCheckbox('- [x] <!-- rebase-all-open-prs -->Click to rebase'), true);
+  assert.equal(hasRenovateTriggerCheckbox('- [x] <!-- approve-branch=renovate/foo-1.x -->Update foo'), true);
+  assert.equal(hasRenovateTriggerCheckbox('- [x] <!-- manual job -->Trigger Renovate run'), true);
+  assert.equal(hasRenovateTriggerCheckbox('- [ ] <!-- rebase-all-open-prs -->Click to rebase'), false);
+});
+
+test('triggers when one dashboard checkbox is newly checked among others', () => {
+  const previous = [
+    '- [x] <!-- rebase-branch=renovate/a-1.x -->Update a',
+    '- [ ] <!-- rebase-branch=renovate/b-2.x -->Update b',
+  ].join('\n');
+  const current = [
+    '- [x] <!-- rebase-branch=renovate/a-1.x -->Update a',
+    '- [x] <!-- rebase-branch=renovate/b-2.x -->Update b',
+  ].join('\n');
+
+  const trigger = resolveTrigger('issues', {
+    action: 'edited',
+    repository: { full_name: 'lkshrk/h-cloud' },
+    issue: { body: current },
+    changes: { body: { from: previous } },
+  });
+
+  assert.equal(trigger.shouldTrigger, true);
+});
+
 test('resolves managed issue edit trigger', () => {
   const trigger = resolveTrigger('issues', {
     action: 'edited',
