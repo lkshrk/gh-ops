@@ -26,12 +26,12 @@ jobs:
       group: renovate-${{ matrix.owner }}
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/create-github-app-token@v3
         id: app-token
         with:
-          app-id: ${{ secrets.RENOVATE_APP_ID }}
+          client-id: ${{ secrets.RENOVATE_APP_CLIENT_ID }}
           private-key: ${{ secrets.RENOVATE_APP_PRIVATE_KEY }}
           owner: ${{ matrix.owner }}
 
@@ -39,10 +39,10 @@ jobs:
         with:
           configurationFile: renovate/config.js
           token: ${{ steps.app-token.outputs.token }}
+          env-regex: '^(?:RENOVATE_\w+|LOG_LEVEL|GITHUB_COM_TOKEN|NODE_OPTIONS|DOCKERHUB_\w+|GHCR_\w+)$'
         env:
           RENOVATE_REPOSITORY_OWNER: ${{ matrix.owner }}
-          RENOVATE_RUN_ALL: 'true'
-          RENOVATE_REPOSITORIES: ${{ github.event.inputs.repositories || github.event.client_payload.repositories || '' }}
+          RENOVATE_REPO_FILTER: ${{ github.event.inputs.repositories || github.event.client_payload.repositories || '' }}
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           DOCKERHUB_PASSWORD: ${{ secrets.DOCKERHUB_PASSWORD }}
           GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
