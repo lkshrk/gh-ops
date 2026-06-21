@@ -78,12 +78,9 @@ Recommended GitHub App repository permissions:
 
 ## Repository Scope
 
-Managed repositories are listed in `repositories.js`, grouped per owner.
-
-`manualReviewRepositories` are intentionally not part of the runner yet — each
-must be inspected and either migrated to a shared preset or documented as
-intentionally skipped. `skippedRepositories` were inspected and had no supported
-dependency manifests or no Git tree at the time of migration.
+Managed repositories are listed in `config.js`, grouped per owner. The file is
+self-contained: the Renovate action mounts only `config.js` into the container,
+so it must not `require` sibling files.
 
 ## Shared Presets
 
