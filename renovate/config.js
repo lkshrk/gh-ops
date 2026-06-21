@@ -1,5 +1,7 @@
 const {
   webdevHarkeRepositories,
+  routivoRepositories,
+  locNewsRepositories,
   lkshrkRepositories,
   managedRepositories,
 } = require('./repositories');
@@ -10,6 +12,10 @@ const repositoriesForOwner = (() => {
   switch (repositoryOwner) {
     case 'webdev-harke':
       return webdevHarkeRepositories;
+    case 'routivo':
+      return routivoRepositories;
+    case 'loc-news':
+      return locNewsRepositories;
     case 'lkshrk':
       return lkshrkRepositories;
     default:
@@ -78,7 +84,4 @@ module.exports = {
   prHourlyLimit: 5,
   prConcurrentLimit: 10,
   timezone: 'Europe/Berlin',
-
-  // Repository behavior belongs in repo-local config via shared presets.
-  // This central file owns execution scope, credentials, and run limits.
 };

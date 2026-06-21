@@ -1,75 +1,71 @@
 # Renovate Bot
 
-Central self-hosted Renovate runner for `lkshrk/*` and `webdev-harke/*` GitHub
-repositories.
+Central self-hosted Renovate runner for `lkshrk/*`, `webdev-harke/*`,
+`routivo/*`, and `loc-news/*` GitHub repositories.
 
-This repo owns execution scope, credentials, shared presets, and Woodpecker run
-limits. The first migration wave preserves each target repository's existing
-Renovate config 1:1 and only removes old repo-local Renovate pipelines. Shared
-presets are available for a later cleanup pass after the central runner is
-stable.
+This repo owns execution scope, credentials, shared presets, and run limits.
+Renovate runs from a single GitHub Actions workflow
+(`.github/workflows/renovate.yml`); `config.js` owns scope and credentials.
 
-## Run Modes
+## How It Runs
 
-The Woodpecker pipeline runs on:
+The workflow fans out over owners with a matrix. Each owner job mints an
+owner-scoped GitHub App installation token via
+[`actions/create-github-app-token`](https://github.com/actions/create-github-app-token)
+(the `owner` input selects the installation — no per-owner installation ids)
+and runs [`renovatebot/github-action`](https://github.com/renovatebot/github-action)
+with `config.js`.
 
-- cron
-- manual trigger
+Triggers:
 
-By default it exits without running Renovate. This prevents double runs while
-target repositories still have repo-local Renovate pipelines.
+- **`schedule`** — every 2 hours, full allowlist run per owner. Dependency
+  Dashboard checkboxes (rebase, approve, etc.) are honoured on the next run.
+- **`workflow_dispatch`** — manual run. Leave `repositories` blank for a full
+  allowlist run, or pass a comma-separated `owner/repo` list for a targeted run.
+- **`repository_dispatch`** (`type: renovate`) — programmatic trigger. Pass
+  `client_payload.repositories` for a targeted run.
 
-For a targeted run, set:
+`config.js` always receives `RENOVATE_RUN_ALL=true`; when `RENOVATE_REPOSITORIES`
+is non-empty each owner job filters that list to repositories it can access,
+otherwise it runs the owner's full allowlist.
 
-```sh
-RENOVATE_REPOSITORIES=lkshrk/example-repo
+### Targeted Run
+
+Manual, via the Actions UI (`workflow_dispatch` input `repositories`):
+
+```text
+lkshrk/example-repo,webdev-harke/another-repo
 ```
 
-Multiple repositories can be comma-separated.
-If the list contains both owners, each Woodpecker step filters the list to the
-repositories its owner-scoped token can access.
-
-After old repo-local Renovate pipelines have been removed from target
-repositories, set this for a full allowlist run:
+Programmatic, via `repository_dispatch`:
 
 ```sh
-RENOVATE_RUN_ALL=true
+gh api repos/lkshrk/gh-ops/dispatches \
+  -f event_type=renovate \
+  -f 'client_payload[repositories]=lkshrk/example-repo'
 ```
 
-Create or update the daily Woodpecker cron with:
+### Instant Dashboard-Checkbox Triggers
 
-```sh
-WOODPECKER_TOKEN=... node renovate/scripts/upsert-cron.js
-```
-
-Defaults:
-
-- repository: `lkshrk/woodpecker-ops`
-- cron name: `renovate-daily`
-- schedule: `@daily`
-- branch: `main`
-- timezone: omitted unless `RENOVATE_CRON_TIMEZONE` is set
-
-Override with `WOODPECKER_REPO`, `WOODPECKER_REPO_ID`, `RENOVATE_CRON_NAME`,
-`RENOVATE_CRON_SCHEDULE`, `RENOVATE_CRON_BRANCH`, or
-`RENOVATE_CRON_TIMEZONE`.
+A workflow in this repo cannot observe issue/PR events in other repositories.
+For near-real-time checkbox handling, the 2-hour schedule is the baseline. For
+true instant triggering, point a webhook receiver (or a small per-repo workflow)
+at the `repository_dispatch` endpoint above with the source `owner/repo`.
 
 ## Required Secrets
 
-Woodpecker must provide:
+Configure as GitHub Actions repository secrets:
 
-- `github_app_id` - GitHub App client id, preferred for JWT issuer, or app id
-- `github_app_private_key_b64` - base64-encoded GitHub App private key
-- `github_app_installation_id_lkshrk` - installation id for the `lkshrk` account
-- `github_app_installation_id_webdev_harke` - installation id for the `webdev-harke` organization
-- `docker_user` - Docker Hub username for authenticated image metadata lookups
-- `docker_token` - Docker Hub password or access token
-- `perso_user` - GitHub username for GHCR image metadata lookups
-- `perso_token` - GitHub classic PAT with `read:packages` for GHCR image metadata lookups
+- `RENOVATE_APP_ID` — GitHub App id (or client id)
+- `RENOVATE_APP_PRIVATE_KEY` — GitHub App private key, raw PEM
+- `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN` — Docker Hub creds for `docker.io`
+  `hostRules` (avoid unauthenticated pull-rate limits during datasource lookups)
+- `GHCR_USERNAME` / `GHCR_TOKEN` — GitHub username + classic PAT with
+  `read:packages` for `ghcr.io` `hostRules`
 
-The GitHub App should be installed on both owners with access to the managed
-repositories. The pipeline exchanges the app credentials for short-lived
-installation tokens per owner before running Renovate.
+The GitHub App must be installed on every managed owner with access to the
+managed repositories. GHCR metadata lookups need a classic PAT; App installation
+tokens cover repository and pull-request access but not GHCR package metadata.
 
 Recommended GitHub App repository permissions:
 
@@ -80,52 +76,29 @@ Recommended GitHub App repository permissions:
 - Metadata: read-only
 - Workflows: read/write if Renovate needs to update workflow files
 
-Docker Hub credentials are used by Renovate `hostRules` for `docker.io` to avoid
-unauthenticated pull-rate limits during Docker datasource lookups.
-The pipeline maps `docker_user` / `docker_token` to both `DOCKERHUB_*` and
-`RENOVATE_DOCKER_*` environment variables. Full allowlist runs fail fast if the
-Docker Hub credentials are missing.
-
-GHCR credentials are used by Renovate `hostRules` for `ghcr.io`. GitHub Packages
-container registry authentication uses a classic PAT with `read:packages`; GitHub
-App installation tokens are still used for repository and pull request access,
-but not for GHCR package metadata lookups.
-
 ## Repository Scope
 
-Managed repositories are listed in `repositories.js`.
+Managed repositories are listed in `repositories.js`, grouped per owner.
 
-The first managed scope includes:
-
-- active `webdev-harke/*` app repositories
-- active `lkshrk/*` app/library repositories
-- `lkshrk/h-cloud` as the GitOps repository
-
-Repos in `manualReviewRepositories` are intentionally not part of the runner yet.
-Each one must be inspected and either migrated to a shared preset or documented
-as intentionally skipped. Repos in `skippedRepositories` were inspected and had
-no supported dependency manifests or no Git tree at the time of migration.
+`manualReviewRepositories` are intentionally not part of the runner yet — each
+must be inspected and either migrated to a shared preset or documented as
+intentionally skipped. `skippedRepositories` were inspected and had no supported
+dependency manifests or no Git tree at the time of migration.
 
 ## Shared Presets
 
 Use these repo-local configs:
 
 ```json5
-{
-  extends: ["github>lkshrk/woodpecker-ops//renovate/presets/app-library.json5"]
-}
+{ extends: ["github>lkshrk/gh-ops//renovate/presets/app-library.json5"] }
 ```
 
 ```json5
-{
-  extends: ["github>lkshrk/woodpecker-ops//renovate/presets/web-app.json5"]
-}
+{ extends: ["github>lkshrk/gh-ops//renovate/presets/web-app.json5"] }
 ```
 
 ```json5
-{
-  extends: ["github>lkshrk/woodpecker-ops//renovate/presets/gitops.json5"]
-}
+{ extends: ["github>lkshrk/gh-ops//renovate/presets/gitops.json5"] }
 ```
 
 ## Policy
@@ -134,116 +107,3 @@ Use these repo-local configs:
 - major updates require Dependency Dashboard approval before automerge
 - no global `ignoreTests`
 - repo-specific exceptions stay in the target repo config
-
-## GitHub App Trigger Bridge
-
-The trigger bridge in `renovate-trigger-bridge/` receives GitHub webhooks,
-verifies the GitHub webhook signature, checks that the repository is managed,
-and triggers a targeted Woodpecker manual pipeline with:
-
-```sh
-RENOVATE_REPOSITORIES=owner/repo
-```
-
-Supported first-wave triggers:
-
-- edited issues
-- edited pull requests
-- created or edited issue comments
-
-The body/comment must contain a checked checkbox line:
-
-```md
-- [x] run renovate
-```
-
-For edited issues and pull requests, the bridge triggers when that checkbox is
-newly checked. This prevents unrelated later edits from retriggering Renovate
-while the checkbox remains checked.
-
-Bridge environment:
-
-- `GITHUB_WEBHOOK_SECRET` - webhook secret configured on the GitHub App
-- `WOODPECKER_TOKEN` - Woodpecker personal access token
-- `WOODPECKER_API_URL` - defaults to `https://ci.h-cloud.io/api`
-- `WOODPECKER_REPO_ID` - defaults to `13`
-- `WOODPECKER_BRANCH` - defaults to `main`
-- `PORT` - defaults to `3000`
-- `RENOVATE_BRIDGE_DRY_RUN=true` - verify webhook handling without triggering CI
-- `RENOVATE_BRIDGE_DELIVERY_TTL_MS` - duplicate GitHub delivery retention window,
-  defaults to 1 hour
-
-Bridge logs are one JSON object per relevant webhook outcome. They include the
-delivery id, GitHub event, action, repository, reason, and pipeline metadata
-when a Woodpecker run is created. Secrets and raw webhook bodies are never
-logged.
-
-Log outcomes:
-
-- `invalid_signature` - rejected before parsing the webhook body
-- `ignored` - valid webhook, but event/action/repository/checkbox did not match
-- `duplicate` - valid trigger skipped because the GitHub delivery id was already processed
-- `dry_run` - valid trigger while `RENOVATE_BRIDGE_DRY_RUN=true`
-- `triggered` - targeted Woodpecker pipeline was created
-- `error` - unexpected request handling error
-
-The duplicate guard is in-memory and keyed by the `X-GitHub-Delivery` id. It is
-meant to suppress GitHub redeliveries for the same webhook while the bridge pod
-is running.
-
-Configure the GitHub App webhook URL to:
-
-```text
-https://<bridge-host>/github-webhook
-```
-
-Subscribe to `Issues`, `Pull request`, and `Issue comment` events.
-
-### Operating the Bridge
-
-Trigger Renovate manually from a managed issue, pull request, or issue comment:
-
-```md
-- [x] run renovate
-```
-
-The bridge starts a Woodpecker manual pipeline with
-`RENOVATE_REPOSITORIES=owner/repo`. In h-cloud, inspect bridge logs with:
-
-```sh
-kubectl -n woodpecker logs deploy/renovate-trigger-bridge
-```
-
-The deployed app exposes:
-
-```text
-https://renovate-bridge.h-cloud.io/healthz
-```
-
-The Woodpecker pipeline runs in `lkshrk/woodpecker-ops`, repo id `13`.
-
-### Rotating Bridge Secrets
-
-Rotate `WOODPECKER_TOKEN`:
-
-1. Create a new Woodpecker API token for a user that can manually trigger
-   pipelines on `lkshrk/woodpecker-ops`.
-2. Replace `WOODPECKER_TOKEN` in the h-cloud SOPS secret
-   `kubernetes/apps/woodpecker/renovate-trigger-bridge/app/renovate-trigger-bridge-secret.sops.yaml`.
-3. Commit and push the encrypted secret change to h-cloud.
-4. After Flux rolls out the secret, trigger a managed repository checkbox or send
-   a signed smoke webhook and confirm a targeted Woodpecker pipeline is created.
-5. Revoke the old Woodpecker token.
-
-Rotate `GITHUB_WEBHOOK_SECRET`:
-
-1. Generate a new random webhook secret.
-2. Replace `GITHUB_WEBHOOK_SECRET` in the same h-cloud SOPS secret.
-3. Update the GitHub App webhook secret to the same value.
-4. Commit and push the encrypted secret change to h-cloud.
-5. After Flux rolls out the secret, send a signed smoke webhook and confirm the
-   bridge accepts it.
-
-During webhook secret rotation, update GitHub and h-cloud close together. GitHub
-uses only the current secret, so webhooks signed with the old value will be
-rejected after the bridge rolls out the new value.
