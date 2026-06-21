@@ -42,8 +42,7 @@ jobs:
           env-regex: '^(?:RENOVATE_\w+|LOG_LEVEL|GITHUB_COM_TOKEN|NODE_OPTIONS|DOCKERHUB_\w+|GHCR_\w+)$'
         env:
           RENOVATE_REPOSITORY_OWNER: ${{ matrix.owner }}
-          RENOVATE_RUN_ALL: 'true'
-          RENOVATE_REPOSITORIES: ${{ github.event.inputs.repositories || github.event.client_payload.repositories || '' }}
+          RENOVATE_REPO_FILTER: ${{ github.event.inputs.repositories || github.event.client_payload.repositories || '' }}
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           DOCKERHUB_PASSWORD: ${{ secrets.DOCKERHUB_PASSWORD }}
           GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}

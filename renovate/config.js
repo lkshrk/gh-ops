@@ -68,16 +68,14 @@ const repositoriesForOwner = (() => {
   }
 })();
 
-const explicitRepositories = process.env.RENOVATE_REPOSITORIES
-  ? process.env.RENOVATE_REPOSITORIES.split(',').map((repo) => repo.trim()).filter(Boolean)
+const explicitRepositories = process.env.RENOVATE_REPO_FILTER
+  ? process.env.RENOVATE_REPO_FILTER.split(',').map((repo) => repo.trim()).filter(Boolean)
   : [];
 
 const repositoryOwner = process.env.RENOVATE_REPOSITORY_OWNER;
 const targetRepositories = explicitRepositories.length
   ? explicitRepositories.filter((repo) => !repositoryOwner || repo.startsWith(`${repositoryOwner}/`))
-  : process.env.RENOVATE_RUN_ALL === 'true'
-    ? repositoriesForOwner
-    : [];
+  : repositoriesForOwner;
 
 const dockerUsername = process.env.RENOVATE_DOCKER_USERNAME || process.env.DOCKERHUB_USERNAME;
 const dockerPassword = process.env.RENOVATE_DOCKER_PASSWORD || process.env.DOCKERHUB_PASSWORD;
