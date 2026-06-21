@@ -1,81 +1,12 @@
-const webdevHarkeRepositories = [
-  'webdev-harke/pfalz-herz',
-  'webdev-harke/ISC',
-  'webdev-harke/pizzeria-riva',
-  'webdev-harke/quintessenz-horst',
-  'webdev-harke/portfolio',
-];
-
-const routivoRepositories = [
-  'routivo/routivo-monorepo',
-];
-
-const locNewsRepositories = [
-  'loc-news/civora-monorepo',
-];
-
-const lkshrkRepositories = [
-  'lkshrk/h-cloud',
-  'lkshrk/directus-extension-reply-to-mail',
-  'lkshrk/linear-ai',
-  'lkshrk/d-streamy',
-  'lkshrk/rybbit-oidc',
-  'lkshrk/omni',
-  'lkshrk/better-audio-mixer',
-  'lkshrk/skeletoni',
-  'lkshrk/civora-backend',
-  'lkshrk/civora-spec',
-  'lkshrk/signal-cli-seerr-plugin',
-  'lkshrk/showcase-frontend',
-  'lkshrk/showcase-auth',
-  'lkshrk/showcase-api',
-  'lkshrk/python-is-awesome',
-  'lkshrk/onWB',
-  'lkshrk/hammerspoon-ultrawide',
-  'lkshrk/civora-web',
-  'lkshrk/dotfiles',
-  'lkshrk/challenge-demo',
-  'lkshrk/Easy-Web-GPG',
-  'lkshrk/sonarr-season-reminder',
-  'lkshrk/docker-cloudnativepg-timescale',
-  'lkshrk/WoW-DragonflightUI',
-  'lkshrk/kickstart.nvim',
-  'lkshrk/TooltipRealmInfo',
-  'lkshrk/home-assistant-openplantbook',
-  'lkshrk/homeassistant-plant',
-  'lkshrk/hass-core',
-];
-
-const managedRepositories = [
-  ...webdevHarkeRepositories,
-  ...routivoRepositories,
-  ...locNewsRepositories,
-  ...lkshrkRepositories,
-];
-
-const repositoriesForOwner = (() => {
-  switch (process.env.RENOVATE_REPOSITORY_OWNER) {
-    case 'webdev-harke':
-      return webdevHarkeRepositories;
-    case 'routivo':
-      return routivoRepositories;
-    case 'loc-news':
-      return locNewsRepositories;
-    case 'lkshrk':
-      return lkshrkRepositories;
-    default:
-      return managedRepositories;
-  }
-})();
+const repositoryOwner = process.env.RENOVATE_REPOSITORY_OWNER;
 
 const explicitRepositories = process.env.RENOVATE_REPO_FILTER
   ? process.env.RENOVATE_REPO_FILTER.split(',').map((repo) => repo.trim()).filter(Boolean)
   : [];
 
-const repositoryOwner = process.env.RENOVATE_REPOSITORY_OWNER;
-const targetRepositories = explicitRepositories.length
-  ? explicitRepositories.filter((repo) => !repositoryOwner || repo.startsWith(`${repositoryOwner}/`))
-  : repositoriesForOwner;
+const targetRepositories = explicitRepositories.filter(
+  (repo) => !repositoryOwner || repo.startsWith(`${repositoryOwner}/`),
+);
 
 const dockerUsername = process.env.RENOVATE_DOCKER_USERNAME || process.env.DOCKERHUB_USERNAME;
 const dockerPassword = process.env.RENOVATE_DOCKER_PASSWORD || process.env.DOCKERHUB_PASSWORD;
@@ -95,7 +26,14 @@ module.exports = {
   platform: 'github',
   ...(process.env.RENOVATE_TOKEN ? { token: process.env.RENOVATE_TOKEN } : {}),
 
-  repositories: targetRepositories,
+  // A non-empty RENOVATE_REPO_FILTER pins the run to those repos; otherwise
+  // autodiscover every repo the App installation can see. requireConfig skips
+  // repos without a Renovate config, so installation scope plus repo-local
+  // config are the only gates -- no central allowlist to maintain.
+  ...(explicitRepositories.length
+    ? { autodiscover: false, repositories: targetRepositories }
+    : { autodiscover: true }),
+
   hostRules,
   onboarding: false,
   requireConfig: 'required',

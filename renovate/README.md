@@ -78,9 +78,20 @@ Recommended GitHub App repository permissions:
 
 ## Repository Scope
 
-Managed repositories are listed in `config.js`, grouped per owner. The file is
-self-contained: the Renovate action mounts only `config.js` into the container,
-so it must not `require` sibling files.
+There is no central allowlist. Each owner job runs `autodiscover`, so Renovate
+acts on every repo the App installation can see, gated by two things:
+
+1. **App installation scope** — install `renovate-master` on the repos (or "All
+   repositories") you want in scope per owner.
+2. **Repo-local config** — `requireConfig: required` + `onboarding: false` skip
+   any repo without a Renovate config (`disabled-no-config`), so only repos that
+   extend a shared preset actually get PRs.
+
+A non-empty `RENOVATE_REPO_FILTER` (the `workflow_dispatch` / `repository_dispatch`
+input) pins a run to specific repos and disables autodiscover.
+
+`config.js` is self-contained: the action mounts only that file into the
+container, so it must not `require` sibling files.
 
 ## Shared Presets
 
