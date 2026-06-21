@@ -16,7 +16,7 @@ source repository.
 | Variable | Default | Description |
 |---|---|---|
 | `GITHUB_WEBHOOK_SECRET` | — | Required. GitHub App webhook secret. |
-| `GITHUB_DISPATCH_TOKEN` | — | Required. Fine-grained PAT with Actions read+write on `lkshrk/gh-ops`. |
+| `GITHUB_DISPATCH_TOKEN` | — | Required. Fine-grained PAT with Contents write on `lkshrk/gh-ops`. |
 | `DISPATCH_REPO` | `lkshrk/gh-ops` | Target repo for `repository_dispatch`. |
 | `EVENT_TYPE` | `renovate` | `event_type` sent in the dispatch payload. |
 | `PORT` | `3000` | HTTP listen port. |
