@@ -47,10 +47,11 @@ gh api repos/lkshrk/gh-ops/dispatches \
 
 ### Instant Dashboard-Checkbox Triggers
 
-A workflow in this repo cannot observe issue/PR events in other repositories.
-For near-real-time checkbox handling, the 2-hour schedule is the baseline. For
-true instant triggering, point a webhook receiver (or a small per-repo workflow)
-at the `repository_dispatch` endpoint above with the source `owner/repo`.
+A workflow in this repo cannot observe issue/PR events in other repositories, so
+checkbox clicks are handled instantly by the Cloudflare Worker in
+`../renovate-webhook/`: it receives the `renovate-master` App webhook and fires
+the `repository_dispatch` above for the source `owner/repo`. The 2-hour schedule
+is the fallback.
 
 ## Required Secrets
 

@@ -1,0 +1,11 @@
+name = "renovate-webhook"
+main = "worker.js"
+compatibility_date = "2025-01-01"
+
+[vars]
+DISPATCH_REPO = "lkshrk/gh-ops"
+EVENT_TYPE = "renovate"
+
+# Secrets (set with `wrangler secret put`, never commit):
+#   WEBHOOK_SECRET  - GitHub App webhook secret
+#   DISPATCH_TOKEN  - fine-grained PAT, Actions: read/write on lkshrk/gh-ops
