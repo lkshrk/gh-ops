@@ -18,16 +18,16 @@ with `config.js`.
 
 Triggers:
 
-- **`schedule`** — every 2 hours, full allowlist run per owner. Dependency
+- **`schedule`** — every 2 hours, autodiscover run per owner. Dependency
   Dashboard checkboxes (rebase, approve, etc.) are honoured on the next run.
-- **`workflow_dispatch`** — manual run. Leave `repositories` blank for a full
-  allowlist run, or pass a comma-separated `owner/repo` list for a targeted run.
+- **`workflow_dispatch`** — manual run. Leave `repositories` blank to autodiscover,
+  or pass a comma-separated `owner/repo` list for a targeted run.
 - **`repository_dispatch`** (`type: renovate`) — programmatic trigger. Pass
   `client_payload.repositories` for a targeted run.
 
-`config.js` always receives `RENOVATE_RUN_ALL=true`; when `RENOVATE_REPOSITORIES`
-is non-empty each owner job filters that list to repositories it can access,
-otherwise it runs the owner's full allowlist.
+The dispatch/input value reaches `config.js` as `RENOVATE_REPO_FILTER`: when
+non-empty each owner job pins to the repos it can access, otherwise it
+autodiscovers every repo its App installation can see.
 
 ### Targeted Run
 
@@ -48,8 +48,8 @@ gh api repos/lkshrk/gh-ops/dispatches \
 ### Instant Dashboard-Checkbox Triggers
 
 A workflow in this repo cannot observe issue/PR events in other repositories, so
-checkbox clicks are handled instantly by the Cloudflare Worker in
-`../renovate-webhook/`: it receives the `renovate-master` App webhook and fires
+checkbox clicks are handled instantly by the k8s bridge in
+`../renovate-trigger-bridge/`: it receives the `renovate-master` App webhook and fires
 the `repository_dispatch` above for the source `owner/repo`. The 2-hour schedule
 is the fallback.
 
