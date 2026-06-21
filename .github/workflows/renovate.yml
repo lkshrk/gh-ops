@@ -1,0 +1,50 @@
+name: Renovate
+
+on:
+  schedule:
+    - cron: '0 */2 * * *'
+  workflow_dispatch:
+    inputs:
+      repositories:
+        description: 'Targeted run: comma-separated owner/repo list (blank = full allowlist)'
+        required: false
+        type: string
+  repository_dispatch:
+    types: [renovate]
+
+permissions:
+  contents: read
+
+jobs:
+  renovate:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        owner: [webdev-harke, routivo, loc-news, lkshrk]
+    concurrency:
+      group: renovate-${{ matrix.owner }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/create-github-app-token@v3
+        id: app-token
+        with:
+          app-id: ${{ secrets.RENOVATE_APP_ID }}
+          private-key: ${{ secrets.RENOVATE_APP_PRIVATE_KEY }}
+          owner: ${{ matrix.owner }}
+
+      - uses: renovatebot/github-action@v46.1.15
+        with:
+          configurationFile: renovate/config.js
+          token: ${{ steps.app-token.outputs.token }}
+        env:
+          RENOVATE_REPOSITORY_OWNER: ${{ matrix.owner }}
+          RENOVATE_RUN_ALL: 'true'
+          RENOVATE_REPOSITORIES: ${{ github.event.inputs.repositories || github.event.client_payload.repositories || '' }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_PASSWORD: ${{ secrets.DOCKERHUB_PASSWORD }}
+          GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
+          GHCR_PASSWORD: ${{ secrets.GHCR_TOKEN }}
+          LOG_LEVEL: info

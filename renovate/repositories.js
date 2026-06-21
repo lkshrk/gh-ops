@@ -6,8 +6,15 @@ const webdevHarkeRepositories = [
   'webdev-harke/portfolio',
 ];
 
+const routivoRepositories = [
+  'routivo/routivo-monorepo',
+];
+
+const locNewsRepositories = [
+  'loc-news/civora-monorepo',
+];
+
 const lkshrkRepositories = [
-  'lkshrk/civora-monorepo',
   'lkshrk/h-cloud',
   'lkshrk/directus-extension-reply-to-mail',
   'lkshrk/linear-ai',
@@ -41,6 +48,8 @@ const lkshrkRepositories = [
 
 const managedRepositories = [
   ...webdevHarkeRepositories,
+  ...routivoRepositories,
+  ...locNewsRepositories,
   ...lkshrkRepositories,
 ];
 
@@ -79,6 +88,8 @@ const skippedRepositories = [
 
 module.exports = {
   webdevHarkeRepositories,
+  routivoRepositories,
+  locNewsRepositories,
   lkshrkRepositories,
   managedRepositories,
   manualReviewRepositories,
