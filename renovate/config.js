@@ -44,5 +44,8 @@ module.exports = {
 
   prHourlyLimit: 5,
   prConcurrentLimit: 10,
+
+  pruneStaleBranches: true,
+  
   timezone: 'Europe/Berlin',
 };
