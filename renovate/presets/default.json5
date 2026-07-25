@@ -7,6 +7,7 @@
     "schedule:earlyMondays",
   ],
   rangeStrategy: "replace",
+  rebaseWhen: "behind-base-branch",
   automergeType: "pr",
   automergeStrategy: "squash",
   platformAutomerge: true,
