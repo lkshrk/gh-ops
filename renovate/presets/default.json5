@@ -6,6 +6,7 @@
     ":semanticCommits",
     "schedule:earlyMondays",
   ],
+  minimumReleaseAge: "48 hours",
   rangeStrategy: "replace",
   rebaseWhen: "behind-base-branch",
   automergeType: "pr",
