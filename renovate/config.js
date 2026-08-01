@@ -38,7 +38,6 @@ module.exports = {
   onboarding: false,
   requireConfig: 'required',
 
-  gitAuthor: 'Renovate Bot <bot@renovateapp.com>',
   dependencyDashboard: true,
   dependencyDashboardTitle: 'Renovate Dashboard',
 
