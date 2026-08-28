@@ -47,4 +47,4 @@ jobs:
           DOCKERHUB_PASSWORD: ${{ secrets.DOCKERHUB_PASSWORD }}
           GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
           GHCR_PASSWORD: ${{ secrets.GHCR_TOKEN }}
-          LOG_LEVEL: debug
+          LOG_LEVEL: info
