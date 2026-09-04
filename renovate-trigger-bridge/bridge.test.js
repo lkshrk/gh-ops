@@ -228,7 +228,7 @@ test('triggerDispatch throws on non-ok response', async () => {
   }
 });
 
-test('forwards the raw delivery to OpenHands with an HMAC signature', async () => {
+test('forwards the delivery to OpenHands wrapped in a payload envelope with an HMAC signature', async () => {
   const { calls, fetchImpl } = recordingFetch();
 
   const result = await forwardToOpenHands({
@@ -243,7 +243,8 @@ test('forwards the raw delivery to OpenHands with an HMAC signature', async () =
   assert.equal(calls.length, 1);
   assert.equal(calls[0].url, 'http://openhands.ai.svc/events');
   assert.equal(calls[0].init.method, 'POST');
-  assert.equal(calls[0].init.body, openhandsBody);
+  const envelope = JSON.stringify({ payload: JSON.parse(openhandsBody) });
+  assert.equal(calls[0].init.body, envelope);
 
   const headers = calls[0].init.headers;
   assert.equal(headers['Content-Type'], 'application/json');
@@ -251,7 +252,7 @@ test('forwards the raw delivery to OpenHands with an HMAC signature', async () =
   assert.equal(headers['X-GitHub-Delivery'], 'delivery-42');
   assert.equal(
     headers['X-Hub-Signature-256'],
-    `sha256=${crypto.createHmac('sha256', 'openhands-secret').update(openhandsBody).digest('hex')}`,
+    `sha256=${crypto.createHmac('sha256', 'openhands-secret').update(envelope).digest('hex')}`,
   );
   assert.ok(calls[0].init.signal);
 });
