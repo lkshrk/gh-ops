@@ -1,5 +1,8 @@
 const crypto = require('node:crypto');
 
+const DEFAULT_FORWARD_EVENTS = ['pull_request', 'issue_comment'];
+const DEFAULT_FORWARD_TIMEOUT_MS = 5000;
+
 const checkboxPatterns = [
   /^\s*[-*]\s+\[x]\s+(?:run\s+)?renovate\b/i,
   /^\s*[-*]\s+\[x]\s+trigger\s+renovate\b/i,
@@ -8,6 +11,10 @@ const checkboxPatterns = [
   // HTML-comment marker, e.g. `- [x] <!-- rebase-all-open-prs -->...`.
   /^\s*[-*]\s+\[x]\s*<!--/i,
 ];
+
+function signBody(secret, rawBody) {
+  return `sha256=${crypto.createHmac('sha256', secret).update(rawBody).digest('hex')}`;
+}
 
 function verifyGitHubSignature(secret, rawBody, signatureHeader) {
   if (!secret) {
@@ -18,10 +25,7 @@ function verifyGitHubSignature(secret, rawBody, signatureHeader) {
     return false;
   }
 
-  const expected = `sha256=${crypto
-    .createHmac('sha256', secret)
-    .update(rawBody)
-    .digest('hex')}`;
+  const expected = signBody(secret, rawBody);
   const actual = Buffer.from(signatureHeader);
   const expectedBuffer = Buffer.from(expected);
 
@@ -113,7 +117,7 @@ function buildBridgeLogEntry(outcome, details = {}) {
     outcome,
   };
 
-  for (const key of ['delivery', 'event', 'action', 'repository', 'reason', 'error']) {
+  for (const key of ['delivery', 'event', 'action', 'repository', 'reason', 'status', 'error']) {
     if (details[key]) {
       entry[key] = details[key];
     }
@@ -186,10 +190,74 @@ async function triggerDispatch(repository, options = {}) {
   return { status: response.status };
 }
 
+function logBridgeEvent(outcome, details) {
+  console.log(JSON.stringify(buildBridgeLogEntry(outcome, details)));
+}
+
+function parseForwardEvents(value) {
+  const entries = Array.isArray(value) ? value : String(value == null ? '' : value).split(',');
+  const events = entries.map((entry) => String(entry).trim()).filter(Boolean);
+
+  return events.length > 0 ? events : DEFAULT_FORWARD_EVENTS;
+}
+
+async function forwardToOpenHands({ event, delivery, action, rawBody, options = {} }) {
+  const url = options.url || process.env.OPENHANDS_EVENTS_URL;
+  if (!url) {
+    return { forwarded: false, reason: 'openhands forwarding disabled' };
+  }
+
+  const events = parseForwardEvents(
+    options.events === undefined ? process.env.OPENHANDS_FORWARD_EVENTS : options.events,
+  );
+  if (!events.includes(event)) {
+    return { forwarded: false, reason: `event ${event} not forwarded` };
+  }
+
+  const log = options.log || logBridgeEvent;
+  const details = { delivery, event, action };
+  const dryRun =
+    options.dryRun === undefined ? process.env.RENOVATE_BRIDGE_DRY_RUN === 'true' : options.dryRun;
+
+  if (dryRun) {
+    log('openhands_dry_run', { ...details, reason: 'dry run' });
+    return { forwarded: false, reason: 'dry run' };
+  }
+
+  const secret = options.secret || process.env.OPENHANDS_WEBHOOK_SECRET;
+  const timeoutMs = Number(
+    options.timeoutMs || process.env.OPENHANDS_FORWARD_TIMEOUT_MS || DEFAULT_FORWARD_TIMEOUT_MS,
+  );
+  const doFetch = options.fetch || globalThis.fetch;
+
+  try {
+    const response = await doFetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'User-Agent': 'renovate-trigger-bridge',
+        'X-GitHub-Event': event,
+        'X-GitHub-Delivery': delivery,
+        'X-Hub-Signature-256': signBody(secret, rawBody),
+      },
+      body: rawBody,
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+
+    log('openhands_forwarded', { ...details, status: response.status });
+    return { forwarded: true, status: response.status };
+  } catch (error) {
+    log('openhands_forward_failed', { ...details, error: error.message });
+    return { forwarded: false, error: error.message };
+  }
+}
+
 module.exports = {
   buildBridgeLogEntry,
   createDeliveryDeduper,
+  forwardToOpenHands,
   hasRenovateTriggerCheckbox,
+  logBridgeEvent,
   resolveTrigger,
   triggerDispatch,
   verifyGitHubSignature,
