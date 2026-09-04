@@ -229,6 +229,7 @@ async function forwardToOpenHands({ event, delivery, action, rawBody, options = 
     options.timeoutMs || process.env.OPENHANDS_FORWARD_TIMEOUT_MS || DEFAULT_FORWARD_TIMEOUT_MS,
   );
   const doFetch = options.fetch || globalThis.fetch;
+  const body = JSON.stringify({ payload: JSON.parse(rawBody) });
 
   try {
     const response = await doFetch(url, {
@@ -238,9 +239,9 @@ async function forwardToOpenHands({ event, delivery, action, rawBody, options = 
         'User-Agent': 'renovate-trigger-bridge',
         'X-GitHub-Event': event,
         'X-GitHub-Delivery': delivery,
-        'X-Hub-Signature-256': signBody(secret, rawBody),
+        'X-Hub-Signature-256': signBody(secret, body),
       },
-      body: rawBody,
+      body,
       signal: AbortSignal.timeout(timeoutMs),
     });
 
