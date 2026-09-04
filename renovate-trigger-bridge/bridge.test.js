@@ -7,8 +7,31 @@ const {
   verifyGitHubSignature,
   buildBridgeLogEntry,
   createDeliveryDeduper,
+  forwardToOpenHands,
   triggerDispatch,
 } = require('./bridge');
+
+const openhandsBody = Buffer.from('{"action":"opened","number":7}');
+
+function recordingFetch(result = { ok: true, status: 202 }) {
+  const calls = [];
+  const fetchImpl = async (url, init) => {
+    calls.push({ url, init });
+    return result;
+  };
+
+  return { calls, fetchImpl };
+}
+
+function forwardOptions(overrides = {}) {
+  return {
+    url: 'http://openhands.ai.svc/events',
+    secret: 'openhands-secret',
+    dryRun: false,
+    log: () => {},
+    ...overrides,
+  };
+}
 
 test('detects checked Renovate trigger checkboxes', () => {
   assert.equal(hasRenovateTriggerCheckbox('- [x] run renovate'), true);
@@ -203,4 +226,129 @@ test('triggerDispatch throws on non-ok response', async () => {
   } finally {
     globalThis.fetch = savedFetch;
   }
+});
+
+test('forwards the raw delivery to OpenHands with an HMAC signature', async () => {
+  const { calls, fetchImpl } = recordingFetch();
+
+  const result = await forwardToOpenHands({
+    event: 'pull_request',
+    delivery: 'delivery-42',
+    action: 'opened',
+    rawBody: openhandsBody,
+    options: forwardOptions({ fetch: fetchImpl }),
+  });
+
+  assert.deepEqual(result, { forwarded: true, status: 202 });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, 'http://openhands.ai.svc/events');
+  assert.equal(calls[0].init.method, 'POST');
+  assert.equal(calls[0].init.body, openhandsBody);
+
+  const headers = calls[0].init.headers;
+  assert.equal(headers['Content-Type'], 'application/json');
+  assert.equal(headers['X-GitHub-Event'], 'pull_request');
+  assert.equal(headers['X-GitHub-Delivery'], 'delivery-42');
+  assert.equal(
+    headers['X-Hub-Signature-256'],
+    `sha256=${crypto.createHmac('sha256', 'openhands-secret').update(openhandsBody).digest('hex')}`,
+  );
+  assert.ok(calls[0].init.signal);
+});
+
+test('forwards only the configured events', async () => {
+  const issues = recordingFetch();
+  const ignored = await forwardToOpenHands({
+    event: 'issues',
+    delivery: 'delivery-1',
+    action: 'edited',
+    rawBody: openhandsBody,
+    options: forwardOptions({ fetch: issues.fetchImpl }),
+  });
+
+  assert.deepEqual(ignored, { forwarded: false, reason: 'event issues not forwarded' });
+  assert.equal(issues.calls.length, 0);
+
+  const comment = recordingFetch();
+  await forwardToOpenHands({
+    event: 'issue_comment',
+    delivery: 'delivery-2',
+    action: 'created',
+    rawBody: openhandsBody,
+    options: forwardOptions({ fetch: comment.fetchImpl }),
+  });
+
+  assert.equal(comment.calls.length, 1);
+
+  const custom = recordingFetch();
+  await forwardToOpenHands({
+    event: 'issues',
+    delivery: 'delivery-3',
+    action: 'edited',
+    rawBody: openhandsBody,
+    options: forwardOptions({ fetch: custom.fetchImpl, events: 'issues, push' }),
+  });
+
+  assert.equal(custom.calls.length, 1);
+  assert.equal(custom.calls[0].init.headers['X-GitHub-Event'], 'issues');
+});
+
+test('swallows OpenHands forwarding failures and leaves the renovate path intact', async () => {
+  const logged = [];
+  const result = await forwardToOpenHands({
+    event: 'pull_request',
+    delivery: 'delivery-9',
+    action: 'opened',
+    rawBody: openhandsBody,
+    options: forwardOptions({
+      fetch: async () => {
+        throw new Error('connect ECONNREFUSED');
+      },
+      log: (outcome, details) => logged.push({ outcome, details }),
+    }),
+  });
+
+  assert.deepEqual(result, { forwarded: false, error: 'connect ECONNREFUSED' });
+  assert.equal(logged[0].outcome, 'openhands_forward_failed');
+  assert.equal(logged[0].details.delivery, 'delivery-9');
+
+  const trigger = resolveTrigger('issues', {
+    action: 'edited',
+    repository: { full_name: 'lkshrk/h-cloud' },
+    issue: { body: '- [x] run renovate' },
+  });
+
+  assert.equal(trigger.shouldTrigger, true);
+});
+
+test('skips OpenHands forwarding in dry run and when no url is configured', async () => {
+  const dry = recordingFetch();
+  const logged = [];
+  const dryResult = await forwardToOpenHands({
+    event: 'pull_request',
+    delivery: 'delivery-10',
+    action: 'opened',
+    rawBody: openhandsBody,
+    options: forwardOptions({
+      fetch: dry.fetchImpl,
+      dryRun: true,
+      log: (outcome, details) => logged.push({ outcome, details }),
+    }),
+  });
+
+  assert.deepEqual(dryResult, { forwarded: false, reason: 'dry run' });
+  assert.equal(dry.calls.length, 0);
+  assert.equal(logged[0].outcome, 'openhands_dry_run');
+
+  const disabled = recordingFetch();
+  const disabledResult = await forwardToOpenHands({
+    event: 'pull_request',
+    delivery: 'delivery-11',
+    action: 'opened',
+    rawBody: openhandsBody,
+    options: forwardOptions({ fetch: disabled.fetchImpl, url: '' }),
+  });
+
+  assert.deepEqual(disabledResult, { forwarded: false, reason: 'openhands forwarding disabled' });
+  assert.equal(disabled.calls.length, 0);
 });

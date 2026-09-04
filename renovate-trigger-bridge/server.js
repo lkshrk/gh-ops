@@ -2,6 +2,8 @@ const http = require('node:http');
 const {
   buildBridgeLogEntry,
   createDeliveryDeduper,
+  forwardToOpenHands,
+  logBridgeEvent,
   resolveTrigger,
   triggerDispatch,
   verifyGitHubSignature,
@@ -10,6 +12,11 @@ const {
 const port = Number(process.env.PORT || 3000);
 const webhookSecret = process.env.GITHUB_WEBHOOK_SECRET;
 const dryRun = process.env.RENOVATE_BRIDGE_DRY_RUN === 'true';
+
+if (process.env.OPENHANDS_EVENTS_URL && !process.env.OPENHANDS_WEBHOOK_SECRET) {
+  throw new Error('OPENHANDS_WEBHOOK_SECRET is required when OPENHANDS_EVENTS_URL is set');
+}
+
 const deliveryDeduper = createDeliveryDeduper({
   ttlMs: Number(process.env.RENOVATE_BRIDGE_DELIVERY_TTL_MS || 60 * 60 * 1000),
 });
@@ -31,10 +38,6 @@ function sendJson(response, status, body) {
   response.end(JSON.stringify(body));
 }
 
-function logBridgeEvent(outcome, details) {
-  console.log(JSON.stringify(buildBridgeLogEntry(outcome, details)));
-}
-
 async function handleWebhook(request, response) {
   const rawBody = await readBody(request);
   const signature = request.headers['x-hub-signature-256'];
@@ -48,6 +51,9 @@ async function handleWebhook(request, response) {
   }
 
   const payload = JSON.parse(rawBody.toString('utf8'));
+
+  void forwardToOpenHands({ event, delivery, action: payload.action, rawBody });
+
   const trigger = resolveTrigger(event, payload);
   const logDetails = {
     delivery,
