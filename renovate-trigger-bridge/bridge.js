@@ -190,6 +190,10 @@ async function triggerDispatch(repository, options = {}) {
   return { status: response.status };
 }
 
+const openhandsHeadDeduper = createDeliveryDeduper({
+  ttlMs: Number(process.env.OPENHANDS_HEAD_TTL_MS || 15 * 60 * 1000),
+});
+
 function logBridgeEvent(outcome, details) {
   console.log(JSON.stringify(buildBridgeLogEntry(outcome, details)));
 }
@@ -199,6 +203,19 @@ function parseForwardEvents(value) {
   const events = entries.map((entry) => String(entry).trim()).filter(Boolean);
 
   return events.length > 0 ? events : DEFAULT_FORWARD_EVENTS;
+}
+
+// A pull request that is pushed to twice, or pushed to and then commented on, produces
+// several deliveries describing one head. Each one starts a full review downstream, so
+// the duplicates are dropped here rather than after the work is paid for.
+function reviewKey(event, payload) {
+  const repo = payload.repository && payload.repository.full_name;
+  const pull = payload.pull_request;
+  if (!repo || !pull || !pull.head || !pull.head.sha) {
+    return null;
+  }
+
+  return `${event}:${repo}#${pull.number}@${pull.head.sha}`;
 }
 
 async function forwardToOpenHands({ event, delivery, action, rawBody, options = {} }) {
@@ -216,6 +233,16 @@ async function forwardToOpenHands({ event, delivery, action, rawBody, options = 
 
   const log = options.log || logBridgeEvent;
   const details = { delivery, event, action };
+
+  // An explicit @openhands review comment must always reach the agent, so only
+  // pull_request deliveries are deduplicated.
+  const deduper = options.deduper || openhandsHeadDeduper;
+  const key = reviewKey(event, JSON.parse(rawBody));
+  if (key && deduper.check(key)) {
+    log('openhands_duplicate_head', { ...details, reason: 'head already forwarded' });
+    return { forwarded: false, reason: 'duplicate head' };
+  }
+
   const dryRun =
     options.dryRun === undefined ? process.env.RENOVATE_BRIDGE_DRY_RUN === 'true' : options.dryRun;
 
@@ -257,6 +284,8 @@ module.exports = {
   buildBridgeLogEntry,
   createDeliveryDeduper,
   forwardToOpenHands,
+  openhandsHeadDeduper,
+  reviewKey,
   hasRenovateTriggerCheckbox,
   logBridgeEvent,
   resolveTrigger,

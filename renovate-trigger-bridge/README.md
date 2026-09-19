@@ -20,6 +20,13 @@ unchanged, the original `X-GitHub-Event` and `X-GitHub-Delivery` headers, and an
 fire-and-forget: it never changes the response to GitHub and never blocks or
 fails the `repository_dispatch` path.
 
+`pull_request` deliveries are deduplicated by repository, pull request and head SHA
+before forwarding, because each one starts a full review downstream: a branch pushed
+twice, or pushed and then commented on, produced three reviews of one commit. A new push
+changes the head and is forwarded; `issue_comment` is never deduplicated, so an explicit
+`@openhands review` always reaches the agent. The window is in-memory, so a restart costs
+at most one duplicate review.
+
 ## Environment variables
 
 | Variable | Default | Description |
@@ -34,6 +41,7 @@ fails the `repository_dispatch` path.
 | `OPENHANDS_WEBHOOK_SECRET` | — | Required when `OPENHANDS_EVENTS_URL` is set. Signs the forwarded body. |
 | `OPENHANDS_FORWARD_EVENTS` | `pull_request,issue_comment` | Comma-separated `X-GitHub-Event` allowlist. |
 | `OPENHANDS_FORWARD_TIMEOUT_MS` | `5000` | Forward request timeout. |
+| `OPENHANDS_HEAD_TTL_MS` | `900000` | Window in which a repeated `pull_request` delivery for one head is dropped. |
 
 ## Image
 

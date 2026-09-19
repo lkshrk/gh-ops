@@ -8,6 +8,7 @@ const {
   buildBridgeLogEntry,
   createDeliveryDeduper,
   forwardToOpenHands,
+  reviewKey,
   triggerDispatch,
 } = require('./bridge');
 
@@ -352,4 +353,82 @@ test('skips OpenHands forwarding in dry run and when no url is configured', asyn
 
   assert.deepEqual(disabledResult, { forwarded: false, reason: 'openhands forwarding disabled' });
   assert.equal(disabled.calls.length, 0);
+});
+
+test('drops a second pull_request delivery for the same head', async () => {
+  const { calls, fetchImpl } = recordingFetch();
+  const deduper = createDeliveryDeduper({ ttlMs: 60000 });
+  const body = Buffer.from(
+    JSON.stringify({
+      action: 'synchronize',
+      repository: { full_name: 'lkshrk/auto-code-env' },
+      pull_request: { number: 112, head: { sha: 'd6ec0df' } },
+    }),
+  );
+  const options = {
+    url: 'https://openhands.example/events',
+    secret: 'secret',
+    events: ['pull_request'],
+    dryRun: false,
+    log: () => {},
+    fetch: fetchImpl,
+    deduper,
+  };
+
+  const first = await forwardToOpenHands({ event: 'pull_request', delivery: 'a', rawBody: body, options });
+  const second = await forwardToOpenHands({ event: 'pull_request', delivery: 'b', rawBody: body, options });
+
+  assert.equal(first.forwarded, true);
+  assert.equal(second.forwarded, false);
+  assert.equal(second.reason, 'duplicate head');
+  assert.equal(calls.length, 1);
+});
+
+test('forwards a new head and never deduplicates comment deliveries', async () => {
+  const { calls, fetchImpl } = recordingFetch();
+  const deduper = createDeliveryDeduper({ ttlMs: 60000 });
+  const options = {
+    url: 'https://openhands.example/events',
+    secret: 'secret',
+    events: ['pull_request', 'issue_comment'],
+    dryRun: false,
+    log: () => {},
+    fetch: fetchImpl,
+    deduper,
+  };
+  const pullBody = (sha) =>
+    Buffer.from(
+      JSON.stringify({
+        action: 'synchronize',
+        repository: { full_name: 'lkshrk/auto-code-env' },
+        pull_request: { number: 112, head: { sha } },
+      }),
+    );
+  const commentBody = Buffer.from(
+    JSON.stringify({
+      action: 'created',
+      repository: { full_name: 'lkshrk/auto-code-env' },
+      issue: { number: 112 },
+      comment: { body: '@openhands review' },
+    }),
+  );
+
+  await forwardToOpenHands({ event: 'pull_request', delivery: 'a', rawBody: pullBody('d6ec0df'), options });
+  await forwardToOpenHands({ event: 'pull_request', delivery: 'b', rawBody: pullBody('3f7f2a9'), options });
+  await forwardToOpenHands({ event: 'issue_comment', delivery: 'c', rawBody: commentBody, options });
+  await forwardToOpenHands({ event: 'issue_comment', delivery: 'd', rawBody: commentBody, options });
+
+  assert.equal(calls.length, 4);
+});
+
+test('builds a review key only from a pull request payload', () => {
+  assert.equal(
+    reviewKey('pull_request', {
+      repository: { full_name: 'o/r' },
+      pull_request: { number: 5, head: { sha: 'abc' } },
+    }),
+    'pull_request:o/r#5@abc',
+  );
+  assert.equal(reviewKey('issue_comment', { repository: { full_name: 'o/r' }, issue: { number: 5 } }), null);
+  assert.equal(reviewKey('pull_request', { repository: { full_name: 'o/r' } }), null);
 });
