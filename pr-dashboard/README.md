@@ -104,3 +104,7 @@ ghcr.io/lkshrk/gh-ops/pr-dashboard:latest
 ```
 
 Built by `.github/workflows/pr-dashboard-image.yml` on push to `main`.
+After publishing, main builds send an `image-update` repository dispatch to `lkshrk/h-cloud`
+with the image's exact digest. Its update-image workflow commits the new pin and Flux deploys it;
+no release tag is required. The dispatch uses the existing Renovate GitHub App credentials,
+scoped to Contents write on h-cloud. Failed builds do not trigger deployment.
