@@ -68,7 +68,7 @@ enough context to act on without reproducing:
 |---|---|
 | `/` | Dashboard |
 | `/data.json` | Latest snapshot; `503` until the first refresh succeeds |
-| `/healthz` | Liveness |
+| `/healthz` | Liveness; `bun pr-dashboard/healthcheck.js` probes it from inside the distroless image |
 
 ## Development
 
