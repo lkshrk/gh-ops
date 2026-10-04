@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Maintainer Dashboard</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <h1>Maintainer Dashboard</h1>
+      <span id="freshness" class="freshness">loading…</span>
+    </div>
+    <div id="kpis" class="kpis"></div>
+  </header>
+
+  <div id="banner" class="banner" hidden></div>
+
+  <main>
+    <section id="contributions" class="panel">
+      <header class="panel-head">
+        <h2>Contributions</h2>
+        <p class="hint">Your pull requests to other projects</p>
+      </header>
+      <div class="panel-body"></div>
+    </section>
+
+    <nav id="owners" class="owners" aria-label="Filter own repositories by owner"></nav>
+
+    <section id="workflows" class="panel">
+      <header class="panel-head">
+        <h2>Failing workflows</h2>
+        <p class="hint" id="workflows-hint">Default branch, own repositories</p>
+      </header>
+      <div class="panel-body"></div>
+    </section>
+
+    <section id="renovate" class="panel">
+      <header class="panel-head">
+        <h2>Renovate</h2>
+        <p class="hint">Most outdated first</p>
+      </header>
+      <div class="panel-body"></div>
+    </section>
+  </main>
+</body>
+</html>
