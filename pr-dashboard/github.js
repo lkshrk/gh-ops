@@ -1,6 +1,9 @@
 import { createLogger } from './log.js';
 
-const GRAPHQL_URL = 'https://api.github.com/graphql';
+const API_URL = 'https://api.github.com';
+const GRAPHQL_URL = `${API_URL}/graphql`;
+const DEFAULT_BRANCH_RUNS = 50;
+const RECENT_RUNS = 100;
 const REPO_BATCH_SIZE = 6;
 const RETRYABLE_STATUSES = new Set([502, 503, 504]);
 
@@ -42,26 +45,7 @@ const REPO_DETAIL_FIELDS = `
   isPrivate
   url
   ${renovateConfigFields}
-  defaultBranchRef {
-    name
-    target {
-      ... on Commit {
-        history(first: 8) {
-          nodes {
-            author { name user { login } }
-            checkSuites(last: 15) {
-              nodes {
-                status
-                conclusion
-                app { slug }
-                workflowRun { url createdAt event workflow { name } }
-              }
-            }
-          }
-        }
-      }
-    }
-  }
+  defaultBranchRef { name }
   renovateIssues: issues(first: 5, states: OPEN, filterBy: { createdBy: $renovateBot }) {
     nodes { title url body }
   }
@@ -70,8 +54,7 @@ const REPO_DETAIL_FIELDS = `
   }
   open: pullRequests(states: OPEN, first: 30, orderBy: { field: CREATED_AT, direction: ASC }) {
     nodes {
-      number title url headRefName createdAt isDraft
-      commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
+      number title url headRefName headRefOid createdAt isDraft
     }
   }
 `;
@@ -119,6 +102,19 @@ const CLOSED_CONTRIBUTIONS_QUERY = `
   }
 `;
 
+function normalizeRun(run) {
+  return {
+    workflow: run.name,
+    status: run.status,
+    conclusion: run.conclusion ? run.conclusion.toUpperCase() : null,
+    url: run.html_url,
+    createdAt: run.created_at,
+    event: run.event,
+    author: run.head_commit?.author?.name || run.actor?.login || null,
+    headSha: run.head_sha,
+  };
+}
+
 class GitHubError extends Error {
   constructor(message, details = {}, cause) {
     super(message, cause ? { cause } : undefined);
@@ -156,39 +152,46 @@ function createGitHubClient({
     throw new Error('GITHUB_TOKEN is required');
   }
 
-  let rateLimit = null;
+  const rateLimits = new Map();
   const partialSignatures = new Map();
+  const restCache = new Map();
+  const restWarnings = new Map();
 
-  async function send(operation, body) {
+  async function send(operation, url, init = {}) {
     try {
-      return await fetchImpl(GRAPHQL_URL, {
-        method: 'POST',
+      return await fetchImpl(url, {
+        ...init,
         headers: {
           Authorization: `bearer ${token}`,
-          'Content-Type': 'application/json',
           'User-Agent': 'gh-ops-pr-dashboard',
+          ...init.headers,
         },
-        body,
       });
     } catch (error) {
-      throw new GitHubError(`GitHub GraphQL request "${operation}" failed before a response`, { operation }, error);
+      throw new GitHubError(`GitHub request "${operation}" failed before a response`, { operation }, error);
     }
+  }
+
+  function track(response) {
+    const meta = responseMeta(response);
+    const resource = response.headers.get('x-ratelimit-resource') || 'graphql';
+    if (meta.rateLimit.remaining !== null) rateLimits.set(resource, meta.rateLimit);
+    return meta;
   }
 
   async function graphql(operation, query, variables = {}) {
     const started = Date.now();
-    const body = JSON.stringify({ query, variables });
+    const init = { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ query, variables }) };
 
-    let response = await send(operation, body);
+    let response = await send(operation, GRAPHQL_URL, init);
     let retried = false;
     if (RETRYABLE_STATUSES.has(response.status)) {
       logger.debug('retrying GitHub request', { operation, ...responseMeta(response) });
       retried = true;
-      response = await send(operation, body);
+      response = await send(operation, GRAPHQL_URL, init);
     }
 
-    const meta = responseMeta(response);
-    if (meta.rateLimit.remaining !== null) rateLimit = meta.rateLimit;
+    const meta = track(response);
     const context = { operation, variables, retried, durationMs: Date.now() - started, ...meta };
 
     if (!response.ok) {
@@ -221,6 +224,58 @@ function createGitHubClient({
     return payload.data;
   }
 
+  async function rest(operation, path) {
+    const started = Date.now();
+    const cached = restCache.get(path);
+    const init = { headers: { Accept: 'application/vnd.github+json', ...(cached ? { 'If-None-Match': cached.etag } : {}) } };
+
+    let response = await send(operation, `${API_URL}${path}`, init);
+    let retried = false;
+    if (RETRYABLE_STATUSES.has(response.status)) {
+      retried = true;
+      response = await send(operation, `${API_URL}${path}`, init);
+    }
+
+    const meta = track(response);
+    if (response.status === 304 && cached) return cached.body;
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      throw new GitHubError(`GitHub REST "${operation}" responded ${response.status}`, {
+        operation,
+        path,
+        retried,
+        durationMs: Date.now() - started,
+        ...meta,
+        responseBody: text.slice(0, 1000),
+      });
+    }
+
+    const body = await response.json();
+    const etag = response.headers.get('etag');
+    if (etag) restCache.set(path, { etag, body });
+    return body;
+  }
+
+  async function fetchActionRuns(nameWithOwner, branch) {
+    const base = `/repos/${nameWithOwner}/actions/runs?exclude_pull_requests=true`;
+    try {
+      const [onDefault, recent] = await Promise.all([
+        branch ? rest('action-runs', `${base}&branch=${encodeURIComponent(branch)}&per_page=${DEFAULT_BRANCH_RUNS}`) : null,
+        rest('action-runs', `${base}&per_page=${RECENT_RUNS}`),
+      ]);
+      restWarnings.delete(nameWithOwner);
+      return {
+        defaultBranch: (onDefault?.workflow_runs || []).map(normalizeRun),
+        recent: recent.workflow_runs.map(normalizeRun),
+      };
+    } catch (error) {
+      const level = restWarnings.get(nameWithOwner) === error.message ? 'debug' : 'warn';
+      restWarnings.set(nameWithOwner, error.message);
+      logger[level]('workflow runs unavailable for repository', { repo: nameWithOwner, error });
+      return null;
+    }
+  }
+
   async function fetchViewer() {
     const data = await graphql('viewer', 'query { viewer { login } }');
     return data.viewer.login;
@@ -250,13 +305,14 @@ function createGitHubClient({
     ]);
     const data = await graphql('repo-details', repoDetailsQuery(batch.length), variables);
 
-    return batch
-      .map((_, i) => data[`repo${i}`])
-      .filter(Boolean)
-      .map((repo) => ({
+    const repos = batch.map((_, i) => data[`repo${i}`]).filter(Boolean);
+    return Promise.all(
+      repos.map(async (repo) => ({
         ...repo,
         hasRenovateConfig: RENOVATE_CONFIG_FILES.some((_, index) => repo[`renovateConfig${index}`]),
-      }));
+        actionRuns: await fetchActionRuns(repo.nameWithOwner, repo.defaultBranchRef?.name),
+      })),
+    );
   }
 
   async function fetchOwnerRepos(owner) {
@@ -283,7 +339,11 @@ function createGitHubClient({
     };
   }
 
-  return { fetchContributions, fetchOwnerRepos, fetchViewer, graphql, rateLimit: () => rateLimit };
+  function lowestRateLimit() {
+    return [...rateLimits.values()].sort((a, b) => a.remaining / a.limit - b.remaining / b.limit)[0] || null;
+  }
+
+  return { fetchContributions, fetchOwnerRepos, fetchViewer, graphql, rest, rateLimit: lowestRateLimit };
 }
 
 function parseOwnerTokens(raw) {

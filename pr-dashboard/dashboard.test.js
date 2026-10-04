@@ -2,6 +2,7 @@ import { test } from 'bun:test';
 import assert from 'node:assert/strict';
 import {
   attentionReasons,
+  runsCiState,
   parseRenovateDashboard,
   renovateHealth,
   buildContributions,
@@ -104,32 +105,27 @@ test('buildContributions splits open pull requests by attention and orders close
   assert.deepEqual(result.closed.map((pr) => pr.number), [4, 3]);
 });
 
-function suite(name, conclusion, createdAt, overrides = {}) {
+function run(workflow, conclusion, createdAt, overrides = {}) {
   return {
-    status: 'COMPLETED',
+    workflow,
+    status: 'completed',
     conclusion,
-    app: { slug: 'github-actions' },
-    workflowRun: { url: `https://github.com/me/app/actions/runs/${createdAt}`, createdAt, event: 'schedule', workflow: { name } },
+    url: `https://github.com/me/app/actions/runs/${createdAt}`,
+    createdAt,
+    event: 'schedule',
+    author: 'renovate-master[bot]',
+    headSha: 'abc',
     ...overrides,
   };
 }
 
-function repoWithCommits(commitSuites, overrides = {}) {
+function repoWithRuns(defaultBranch, overrides = {}) {
   return {
     nameWithOwner: 'me/app',
     isPrivate: false,
     url: 'https://github.com/me/app',
-    defaultBranchRef: {
-      name: 'main',
-      target: {
-        history: {
-          nodes: commitSuites.map((suites) => ({
-            author: { name: 'Renovate Bot', user: { login: 'renovate-master[bot]' } },
-            checkSuites: { nodes: suites },
-          })),
-        },
-      },
-    },
+    defaultBranchRef: { name: 'main' },
+    actionRuns: { defaultBranch, recent: [] },
     merged: { nodes: [] },
     open: { nodes: [] },
     ...overrides,
@@ -137,11 +133,13 @@ function repoWithCommits(commitSuites, overrides = {}) {
 }
 
 test('summarizeWorkflows separates constant failures from a single red run', () => {
-  const repo = repoWithCommits([
-    [suite('Release', 'FAILURE', '2026-09-04'), suite('CI', 'FAILURE', '2026-09-04')],
-    [suite('Release', 'TIMED_OUT', '2026-09-03'), suite('CI', 'SUCCESS', '2026-09-03')],
-    [suite('Release', 'FAILURE', '2026-09-02')],
-    [suite('Release', 'SUCCESS', '2026-09-01')],
+  const repo = repoWithRuns([
+    run('Release', 'SUCCESS', '2026-09-01'),
+    run('Release', 'FAILURE', '2026-09-04'),
+    run('CI', 'FAILURE', '2026-09-04'),
+    run('Release', 'TIMED_OUT', '2026-09-03'),
+    run('CI', 'SUCCESS', '2026-09-03'),
+    run('Release', 'FAILURE', '2026-09-02'),
   ]);
 
   const { failing, recent } = summarizeWorkflows([repo], { failStreak: 3 });
@@ -157,14 +155,11 @@ test('summarizeWorkflows separates constant failures from a single red run', () 
   assert.deepEqual(recent.map((entry) => [entry.workflow, entry.streak]), [['CI', 1]]);
 });
 
-test('summarizeWorkflows skips cancelled, running and non-Actions suites', () => {
-  const repo = repoWithCommits([
-    [
-      suite('CI', 'CANCELLED', '2026-09-05'),
-      suite('CI', null, '2026-09-05', { status: 'IN_PROGRESS' }),
-      suite('CI', 'FAILURE', '2026-09-05', { app: { slug: 'codecov' } }),
-    ],
-    [suite('CI', 'SUCCESS', '2026-09-04')],
+test('summarizeWorkflows skips cancelled and running runs', () => {
+  const repo = repoWithRuns([
+    run('CI', 'CANCELLED', '2026-09-05'),
+    run('CI', null, '2026-09-05T01:00:00Z', { status: 'in_progress' }),
+    run('CI', 'SUCCESS', '2026-09-04'),
   ]);
 
   const { failing, recent } = summarizeWorkflows([repo]);
@@ -173,18 +168,30 @@ test('summarizeWorkflows skips cancelled, running and non-Actions suites', () =>
   assert.deepEqual(recent, []);
 });
 
-test('summarizeWorkflows reads check suites newest first within a commit', () => {
-  const repo = repoWithCommits([[suite('Nightly', 'FAILURE', '2026-09-01'), suite('Nightly', 'SUCCESS', '2026-09-02')]]);
-
-  assert.deepEqual(summarizeWorkflows([repo]).recent, []);
+test('summarizeWorkflows treats a repository without readable runs as healthy', () => {
+  assert.deepEqual(summarizeWorkflows([repoWithRuns([], { actionRuns: null })]), { failStreak: 3, failing: [], recent: [] });
 });
 
 test('summarizeWorkflows marks a streak that fills the whole window as capped', () => {
-  const repo = repoWithCommits([[suite('CI', 'FAILURE', '2026-09-03')], [suite('CI', 'FAILURE', '2026-09-02')], [suite('CI', 'FAILURE', '2026-09-01')]]);
+  const repo = repoWithRuns([run('CI', 'FAILURE', '2026-09-03'), run('CI', 'FAILURE', '2026-09-02'), run('CI', 'FAILURE', '2026-09-01')]);
 
   const [entry] = summarizeWorkflows([repo]).failing;
 
   assert.equal(entry.streakCapped, true);
+});
+
+test('runsCiState uses the latest run per workflow for the pull request head', () => {
+  const runs = [
+    run('CI', 'FAILURE', '2026-09-01', { headSha: 'head' }),
+    run('CI', 'SUCCESS', '2026-09-02', { headSha: 'head' }),
+    run('Lint', 'SUCCESS', '2026-09-02', { headSha: 'head' }),
+    run('CI', 'FAILURE', '2026-09-03', { headSha: 'other' }),
+  ];
+
+  assert.equal(runsCiState(runs, 'head'), 'success');
+  assert.equal(runsCiState([...runs, run('Lint', 'TIMED_OUT', '2026-09-04', { headSha: 'head' })], 'head'), 'failure');
+  assert.equal(runsCiState([...runs, run('E2E', null, '2026-09-04', { headSha: 'head', status: 'queued' })], 'head'), 'pending');
+  assert.equal(runsCiState(runs, 'missing'), 'none');
 });
 
 function renovatePr(number, extra = {}) {
@@ -192,7 +199,7 @@ function renovatePr(number, extra = {}) {
 }
 
 test('summarizeRenovate ranks repositories by oldest merged Renovate update', () => {
-  const fresh = repoWithCommits([], {
+  const fresh = repoWithRuns([], {
     nameWithOwner: 'me/fresh',
     hasRenovateConfig: true,
     merged: {
@@ -203,7 +210,7 @@ test('summarizeRenovate ranks repositories by oldest merged Renovate update', ()
       ],
     },
   });
-  const stale = repoWithCommits([], {
+  const stale = repoWithRuns([], {
     nameWithOwner: 'org/stale',
     hasRenovateConfig: true,
     merged: { nodes: [renovatePr(4, { mergedAt: '2026-06-01T00:00:00Z' })] },
@@ -216,7 +223,7 @@ test('summarizeRenovate ranks repositories by oldest merged Renovate update', ()
       ],
     },
   });
-  const never = repoWithCommits([], { nameWithOwner: 'me/never', hasRenovateConfig: true });
+  const never = repoWithRuns([], { nameWithOwner: 'me/never', hasRenovateConfig: true });
 
   const { repos } = summarizeRenovate([fresh, stale, never]);
 
@@ -227,11 +234,11 @@ test('summarizeRenovate ranks repositories by oldest merged Renovate update', ()
 });
 
 test('summarizeRenovate separates onboarding and repositories without Renovate', () => {
-  const onboarding = repoWithCommits([], {
+  const onboarding = repoWithRuns([], {
     nameWithOwner: 'me/new',
     open: { nodes: [{ ...renovatePr(1, { createdAt: '2026-05-31T00:00:00Z' }), headRefName: 'renovate/configure' }] },
   });
-  const none = repoWithCommits([], { nameWithOwner: 'me/none' });
+  const none = repoWithRuns([], { nameWithOwner: 'me/none' });
 
   const result = summarizeRenovate([onboarding, none]);
 
@@ -241,7 +248,7 @@ test('summarizeRenovate separates onboarding and repositories without Renovate',
 });
 
 test('buildSnapshot lists the viewer first among owners', () => {
-  const repos = ['zeta/a', 'me/b', 'alpha/c'].map((nameWithOwner) => repoWithCommits([], { nameWithOwner }));
+  const repos = ['zeta/a', 'me/b', 'alpha/c'].map((nameWithOwner) => repoWithRuns([], { nameWithOwner }));
 
   const snapshot = buildSnapshot({ viewer: 'me', repos, openPullRequests: [], closedPullRequests: [], now: new Date(0) });
 
@@ -252,13 +259,18 @@ test('buildSnapshot lists the viewer first among owners', () => {
 
 function scriptedFetch(responses) {
   const calls = [];
+  const restCalls = [];
   const fetchImpl = async (url, init) => {
+    if (!init.body) {
+      restCalls.push(url);
+      return jsonResponse({ workflow_runs: [] }, 200, { etag: `"${url}"` });
+    }
     const body = JSON.parse(init.body);
     calls.push(body);
     const next = responses.shift();
     return typeof next === 'function' ? next(body) : next;
   };
-  return { calls, fetchImpl };
+  return { calls, restCalls, fetchImpl };
 }
 
 function jsonResponse(data, status = 200, headers = {}) {
@@ -285,11 +297,15 @@ test('fetchOwnerRepos lists one owner\'s repositories, then fetches details in b
           .filter((key) => key.startsWith('name'))
           .map((key) => [
             `repo${key.slice(4)}`,
-            { nameWithOwner: `me/${body.variables[key]}`, renovateConfig6: key === 'name0' ? { id: 'x' } : null },
+            {
+              nameWithOwner: `me/${body.variables[key]}`,
+              defaultBranchRef: { name: 'main' },
+              renovateConfig6: key === 'name0' ? { id: 'x' } : null,
+            },
           ]),
       ),
     });
-  const { calls, fetchImpl } = scriptedFetch([
+  const { calls, restCalls, fetchImpl } = scriptedFetch([
     jsonResponse({ data: { repositoryOwner: { repositories: { pageInfo: { hasNextPage: false }, nodes: names } } } }),
     detail,
     detail,
@@ -301,6 +317,28 @@ test('fetchOwnerRepos lists one owner\'s repositories, then fetches details in b
   assert.deepEqual(calls[0].variables, { owner: 'me', cursor: null });
   assert.deepEqual(repos.map((repo) => repo.nameWithOwner), names.map((repo) => `me/${repo.name}`));
   assert.deepEqual(repos.map((repo) => repo.hasRenovateConfig), [true, false, false, false, false, false, true]);
+  assert.equal(restCalls.length, 14);
+  assert.ok(restCalls.includes('https://api.github.com/repos/me/repo0/actions/runs?exclude_pull_requests=true&branch=main&per_page=50'));
+  assert.deepEqual(repos[0].actionRuns, { defaultBranch: [], recent: [] });
+});
+
+test('rest reuses the cached body when GitHub answers 304 Not Modified', async () => {
+  const responses = [
+    jsonResponse({ workflow_runs: [{ name: 'CI' }] }, 200, { etag: '"v1"' }),
+    { ok: false, status: 304, headers: new Headers({ 'x-ratelimit-resource': 'core' }), json: async () => ({}) },
+  ];
+  const seen = [];
+  const fetchImpl = async (url, init) => {
+    seen.push(init.headers['If-None-Match'] || null);
+    return responses.shift();
+  };
+  const client = createGitHubClient({ token: 't', fetchImpl });
+
+  const first = await client.rest('action-runs', '/repos/me/app/actions/runs');
+  const second = await client.rest('action-runs', '/repos/me/app/actions/runs');
+
+  assert.deepEqual(second, first);
+  assert.deepEqual(seen, [null, '"v1"']);
 });
 
 test('graphql retries a gateway timeout once', async () => {
@@ -330,7 +368,7 @@ test('fetchContributions excludes own owners from the search', async () => {
 test('summarizeRenovate splits recent merges into automerged and merged by hand', () => {
   const bot = { login: 'renovate-master', __typename: 'Bot' };
   const human = { login: 'me', __typename: 'User' };
-  const repo = repoWithCommits([], {
+  const repo = repoWithRuns([], {
     hasRenovateConfig: true,
     merged: {
       nodes: [
@@ -351,7 +389,7 @@ test('summarizeRenovate splits recent merges into automerged and merged by hand'
 
 test('summarizeRenovate flags merge counts capped by the fetch limit', () => {
   const merged = Array.from({ length: 50 }, (_, i) => renovatePr(i, { mergedAt: '2026-10-03T00:00:00Z' }));
-  const repo = repoWithCommits([], { hasRenovateConfig: true, merged: { nodes: merged } });
+  const repo = repoWithRuns([], { hasRenovateConfig: true, merged: { nodes: merged } });
 
   const result = summarizeRenovate([repo], { now: new Date('2026-10-04T00:00:00Z') });
 
@@ -520,7 +558,7 @@ test('renovateHealth rates problems as error, blocked PRs as warn and a clean da
 });
 
 test('summarizeRenovate keeps repositories whose only Renovate signal is a dashboard issue', () => {
-  const repo = repoWithCommits([], {
+  const repo = repoWithRuns([], {
     nameWithOwner: 'me/quiet',
     renovateIssues: { nodes: [{ title: 'Renovate Dashboard', url: 'u', body: '## Repository Problems\n - ⚠️ WARN: x' }] },
   });
@@ -529,4 +567,14 @@ test('summarizeRenovate keeps repositories whose only Renovate signal is a dashb
 
   assert.deepEqual(result.onboarding, []);
   assert.equal(result.repos[0].health.severity, 'error');
+});
+
+test('summarizeRenovate derives pull request CI from Actions runs when no rollup is readable', () => {
+  const repo = repoWithRuns([], {
+    hasRenovateConfig: true,
+    actionRuns: { defaultBranch: [], recent: [run('CI', 'FAILURE', '2026-09-02', { headSha: 'pr-head' })] },
+    open: { nodes: [null, { ...renovatePr(1, { createdAt: '2026-09-01T00:00:00Z' }), headRefOid: 'pr-head' }] },
+  });
+
+  assert.deepEqual(summarizeRenovate([repo]).repos[0].open.map((pr) => pr.ci), ['failure']);
 });

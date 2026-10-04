@@ -45,7 +45,14 @@ There is no authentication in the app. Put it behind a forward-auth proxy (Authe
 
 One fine-grained PAT per owner (a fine-grained token has exactly one resource owner), each with
 read-only **Metadata**, **Contents**, **Pull requests** and **Actions** on all repositories. Each
-organization must allow fine-grained tokens. The contribution search and login use the token of the
+organization must allow fine-grained tokens, and an organization token only sees private
+repositories once the organization has approved it.
+
+Fine-grained tokens cannot read check suites or `statusCheckRollup` on private repositories (that
+needs the Checks permission, which only GitHub Apps get). Workflow history and the CI state of own
+pull requests therefore come from the Actions REST API (`/actions/runs`, Actions: read), requested
+with `If-None-Match` so unchanged responses come back as `304` and do not count against the rate
+limit. The contribution search and login use the token of the
 owner that matches the token's user. An owner whose token fails keeps its last good data and is
 named in a banner; the other owners keep refreshing.
 

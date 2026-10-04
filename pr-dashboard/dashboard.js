@@ -6,7 +6,7 @@ const RENOVATE_WINDOW_DAYS = 7;
 const MERGED_FETCH_LIMIT = 50;
 
 function nodes(connection) {
-  return (connection && connection.nodes) || [];
+  return ((connection && connection.nodes) || []).filter(Boolean);
 }
 
 function latest(dates) {
@@ -103,26 +103,33 @@ function runResult(conclusion) {
 
 function workflowHistory(repo) {
   const byWorkflow = new Map();
-  const commits = nodes(repo.defaultBranchRef?.target?.history);
+  const runs = [...(repo.actionRuns?.defaultBranch || [])].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 
-  for (const commit of commits) {
-    const author = commit.author?.user?.login || commit.author?.name || null;
-    const suites = [...nodes(commit.checkSuites)].reverse();
+  for (const run of runs) {
+    const result = runResult(run.conclusion);
+    if (run.status !== 'completed' || !result) continue;
 
-    for (const suite of suites) {
-      const run = suite.workflowRun;
-      const result = runResult(suite.conclusion);
-      if (suite.app?.slug !== 'github-actions' || !run?.workflow || suite.status !== 'COMPLETED' || !result) {
-        continue;
-      }
-
-      const runs = byWorkflow.get(run.workflow.name) || [];
-      runs.push({ result, url: run.url, createdAt: run.createdAt, event: run.event || null, author });
-      byWorkflow.set(run.workflow.name, runs);
-    }
+    const history = byWorkflow.get(run.workflow) || [];
+    history.push({ result, url: run.url, createdAt: run.createdAt, event: run.event, author: run.author });
+    byWorkflow.set(run.workflow, history);
   }
 
-  return [...byWorkflow].map(([workflow, runs]) => ({ workflow, runs }));
+  return [...byWorkflow].map(([workflow, history]) => ({ workflow, runs: history }));
+}
+
+function runsCiState(runs, sha) {
+  const latestByWorkflow = new Map();
+  for (const run of runs) {
+    if (run.headSha !== sha) continue;
+    const seen = latestByWorkflow.get(run.workflow);
+    if (!seen || run.createdAt > seen.createdAt) latestByWorkflow.set(run.workflow, run);
+  }
+
+  const latest = [...latestByWorkflow.values()];
+  if (latest.some((run) => FAILED_CONCLUSIONS.has(run.conclusion))) return 'failure';
+  if (latest.some((run) => run.status !== 'completed')) return 'pending';
+  if (latest.some((run) => PASSED_CONCLUSIONS.has(run.conclusion))) return 'success';
+  return 'none';
 }
 
 function summarizeWorkflows(repos, { failStreak = 3 } = {}) {
@@ -255,7 +262,7 @@ function summarizeRenovate(repos, { branchPrefix = 'renovate/', now = new Date()
       url: pr.url,
       createdAt: pr.createdAt,
       isDraft: Boolean(pr.isDraft),
-      ci: ciState(pr),
+      ci: ciState(pr) !== 'none' ? ciState(pr) : runsCiState(repo.actionRuns?.recent || [], pr.headRefOid),
     }));
 
     const health = renovateHealth(repo);
@@ -305,6 +312,7 @@ function buildSnapshot({ viewer, repos, openPullRequests, closedPullRequests, op
 
 export {
   attentionReasons,
+  runsCiState,
   parseRenovateDashboard,
   renovateHealth,
   buildContributions,
