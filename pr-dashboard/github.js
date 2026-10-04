@@ -20,19 +20,18 @@ const renovateConfigFields = RENOVATE_CONFIG_FILES.map(
 ).join('\n          ');
 
 const REPO_LIST_QUERY = `
-  query ($cursor: String) {
-    viewer {
+  query ($owner: String!, $cursor: String) {
+    repositoryOwner(login: $owner) {
       repositories(
         first: 100
         after: $cursor
         isArchived: false
         isFork: false
-        ownerAffiliations: [OWNER, ORGANIZATION_MEMBER]
-        affiliations: [OWNER, ORGANIZATION_MEMBER]
+        ownerAffiliations: [OWNER]
         orderBy: { field: PUSHED_AT, direction: DESC }
       ) {
         pageInfo { hasNextPage endCursor }
-        nodes { owner { login } name }
+        nodes { name }
       }
     }
   }
@@ -63,6 +62,9 @@ const REPO_DETAIL_FIELDS = `
       }
     }
   }
+  renovateIssues: issues(first: 5, states: OPEN, filterBy: { createdBy: $renovateBot }) {
+    nodes { title url body }
+  }
   merged: pullRequests(states: MERGED, first: 50, orderBy: { field: UPDATED_AT, direction: DESC }) {
     nodes { number title url headRefName mergedAt mergedBy { login __typename } }
   }
@@ -75,7 +77,10 @@ const REPO_DETAIL_FIELDS = `
 `;
 
 function repoDetailsQuery(count) {
-  const variables = Array.from({ length: count }, (_, i) => `$owner${i}: String!, $name${i}: String!`).join(', ');
+  const variables = [
+    '$renovateBot: String!',
+    ...Array.from({ length: count }, (_, i) => `$owner${i}: String!, $name${i}: String!`),
+  ].join(', ');
   const fields = Array.from(
     { length: count },
     (_, i) => `repo${i}: repository(owner: $owner${i}, name: $name${i}) { ${REPO_DETAIL_FIELDS} }`,
@@ -141,7 +146,12 @@ function responseMeta(response) {
   };
 }
 
-function createGitHubClient({ token, fetchImpl = fetch, logger = createLogger({ level: 'warn' }) }) {
+function createGitHubClient({
+  token,
+  renovateBot = 'renovate[bot]',
+  fetchImpl = fetch,
+  logger = createLogger({ level: 'warn' }),
+}) {
   if (!token) {
     throw new Error('GITHUB_TOKEN is required');
   }
@@ -216,13 +226,17 @@ function createGitHubClient({ token, fetchImpl = fetch, logger = createLogger({ 
     return data.viewer.login;
   }
 
-  async function listOwnRepos() {
+  async function listOwnerRepos(owner) {
     const repos = [];
     let cursor = null;
 
     do {
-      const { repositories } = (await graphql('repo-list', REPO_LIST_QUERY, { cursor })).viewer;
-      repos.push(...repositories.nodes.map((repo) => ({ owner: repo.owner.login, name: repo.name })));
+      const data = await graphql('repo-list', REPO_LIST_QUERY, { owner, cursor });
+      if (!data.repositoryOwner) {
+        throw new GitHubError(`GitHub owner "${owner}" not found or not visible to its token`, { operation: 'repo-list', owner });
+      }
+      const { repositories } = data.repositoryOwner;
+      repos.push(...repositories.nodes.map((repo) => ({ owner, name: repo.name })));
       cursor = repositories.pageInfo.hasNextPage ? repositories.pageInfo.endCursor : null;
     } while (cursor);
 
@@ -230,9 +244,10 @@ function createGitHubClient({ token, fetchImpl = fetch, logger = createLogger({ 
   }
 
   async function fetchRepoBatch(batch) {
-    const variables = Object.fromEntries(
-      batch.flatMap((repo, i) => [[`owner${i}`, repo.owner], [`name${i}`, repo.name]]),
-    );
+    const variables = Object.fromEntries([
+      ['renovateBot', renovateBot],
+      ...batch.flatMap((repo, i) => [[`owner${i}`, repo.owner], [`name${i}`, repo.name]]),
+    ]);
     const data = await graphql('repo-details', repoDetailsQuery(batch.length), variables);
 
     return batch
@@ -244,8 +259,8 @@ function createGitHubClient({ token, fetchImpl = fetch, logger = createLogger({ 
       }));
   }
 
-  async function fetchOwnRepos() {
-    const list = await listOwnRepos();
+  async function fetchOwnerRepos(owner) {
+    const list = await listOwnerRepos(owner);
     const batches = [];
     for (let i = 0; i < list.length; i += REPO_BATCH_SIZE) {
       batches.push(list.slice(i, i + REPO_BATCH_SIZE));
@@ -268,7 +283,24 @@ function createGitHubClient({ token, fetchImpl = fetch, logger = createLogger({ 
     };
   }
 
-  return { fetchContributions, fetchOwnRepos, fetchViewer, graphql, rateLimit: () => rateLimit };
+  return { fetchContributions, fetchOwnerRepos, fetchViewer, graphql, rateLimit: () => rateLimit };
 }
 
-export { GitHubError, RENOVATE_CONFIG_FILES, createGitHubClient };
+function parseOwnerTokens(raw) {
+  if (!raw) throw new Error('GITHUB_TOKENS is required, e.g. {"my-user":"github_pat_...","my-org":"github_pat_..."}');
+
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    throw new Error('GITHUB_TOKENS must be a JSON object mapping owner to token', { cause: error });
+  }
+
+  const entries = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? Object.entries(parsed) : [];
+  const invalid = entries.filter(([, token]) => typeof token !== 'string' || !token.trim()).map(([owner]) => owner);
+  if (entries.length === 0) throw new Error('GITHUB_TOKENS must contain at least one owner');
+  if (invalid.length) throw new Error(`GITHUB_TOKENS has empty tokens for: ${invalid.join(', ')}`);
+  return Object.fromEntries(entries.map(([owner, token]) => [owner, token.trim()]));
+}
+
+export { GitHubError, RENOVATE_CONFIG_FILES, createGitHubClient, parseOwnerTokens };

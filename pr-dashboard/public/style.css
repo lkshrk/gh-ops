@@ -240,6 +240,7 @@ h2 { margin: 0; font-size: 16px; }
 
 .chip.alert { background: var(--bad-bg); color: var(--bad); }
 .chip.good { background: var(--good-bg); color: var(--good); }
+.chip.warn { background: var(--warn-bg); color: var(--warn); }
 .chip.muted { background: var(--panel-2); color: var(--muted); }
 .chip.merged { background: var(--merged-bg); color: var(--merged); }
 
@@ -405,6 +406,11 @@ details[open] > summary .chevron::before { transform: rotate(45deg); }
 
 .sub-row .title { flex: 1; min-width: 0; font-weight: 400; }
 .sub-row .num { color: var(--muted); }
+.sub-row.health .title { white-space: normal; }
+.sub-row.health.failure .title { color: var(--bad); }
+.sub-row.health.pending .title { color: var(--warn); }
+.sub-row.health a { text-decoration: underline; }
+.sub-alert { color: var(--bad); }
 
 .more { border-top: 1px solid var(--line); }
 

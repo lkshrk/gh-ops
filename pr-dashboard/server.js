@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { buildSnapshot } from './dashboard.js';
-import { createGitHubClient } from './github.js';
+import { createGitHubClient, parseOwnerTokens } from './github.js';
 import { createLogger } from './log.js';
 
 const logger = createLogger({ level: process.env.LOG_LEVEL || 'info' });
@@ -19,13 +19,21 @@ const options = {
   branchPrefix: process.env.RENOVATE_BRANCH_PREFIX || 'renovate/',
 };
 
-let github;
+const renovateBot = process.env.RENOVATE_BOT_LOGIN || 'renovate[bot]';
+
+let clients;
 try {
-  github = createGitHubClient({ token: process.env.GITHUB_TOKEN, logger });
+  clients = Object.fromEntries(
+    Object.entries(parseOwnerTokens(process.env.GITHUB_TOKENS)).map(([owner, token]) => [
+      owner,
+      createGitHubClient({ token, renovateBot, logger: logger.child({ owner }) }),
+    ]),
+  );
 } catch (error) {
   logger.error('invalid configuration, exiting', { error });
   process.exit(1);
 }
+const owners = Object.keys(clients);
 
 const publicDir = path.join(import.meta.dir, 'public');
 const assets = {
@@ -49,13 +57,48 @@ let refreshing = false;
 let lastSuccessAt = null;
 let failingSince = null;
 let consecutiveFailures = 0;
-let rateLimitWarnedFor = null;
+const ownerState = new Map();
+const rateLimitWarnedFor = new Map();
 
-function checkRateLimit() {
-  const rateLimit = github.rateLimit();
-  if (!rateLimit?.limit || rateLimit.remaining > rateLimit.limit * 0.1 || rateLimitWarnedFor === rateLimit.resetAt) return;
-  rateLimitWarnedFor = rateLimit.resetAt;
-  logger.warn('GitHub rate limit below 10%', { rateLimit, refreshIntervalMs });
+function checkRateLimits() {
+  for (const [owner, client] of Object.entries(clients)) {
+    const rateLimit = client.rateLimit();
+    if (!rateLimit?.limit || rateLimit.remaining > rateLimit.limit * 0.1) continue;
+    if (rateLimitWarnedFor.get(owner) === rateLimit.resetAt) continue;
+    rateLimitWarnedFor.set(owner, rateLimit.resetAt);
+    logger.warn('GitHub rate limit below 10%', { owner, rateLimit, refreshIntervalMs });
+  }
+}
+
+async function refreshOwner(owner) {
+  const state = ownerState.get(owner) || { repos: null, fetchedAt: null, failures: 0, failingSince: null, error: null };
+  ownerState.set(owner, state);
+
+  try {
+    state.repos = await clients[owner].fetchOwnerRepos(owner);
+    if (state.failures > 0) {
+      logger.info('owner recovered', { owner, failedRefreshes: state.failures, failingSince: state.failingSince });
+    }
+    Object.assign(state, { fetchedAt: new Date().toISOString(), failures: 0, failingSince: null, error: null });
+  } catch (error) {
+    state.failures += 1;
+    state.failingSince ??= new Date().toISOString();
+    state.error = error.message;
+    logger.error('owner refresh failed', {
+      owner,
+      consecutiveFailures: state.failures,
+      failingSince: state.failingSince,
+      servingReposFrom: state.fetchedAt,
+      rateLimit: clients[owner].rateLimit(),
+      error,
+    });
+  }
+}
+
+function ownerErrors() {
+  return [...ownerState]
+    .filter(([, state]) => state.failures > 0)
+    .map(([owner, state]) => ({ owner, message: state.error, since: state.failingSince, dataFrom: state.fetchedAt }));
 }
 
 async function refresh() {
@@ -68,18 +111,25 @@ async function refresh() {
   let phase = 'viewer';
 
   try {
-    viewer ??= await github.fetchViewer();
+    viewer ??= await clients[owners[0]].fetchViewer();
+    const searchClient = clients[viewer] || clients[owners[0]];
+
     phase = 'repos';
-    const repos = await github.fetchOwnRepos();
+    await Promise.all(owners.map(refreshOwner));
+    if (owners.every((owner) => !ownerState.get(owner).repos)) {
+      throw new Error('no owner returned repositories; see owner refresh failed entries');
+    }
+    const repos = owners.flatMap((owner) => ownerState.get(owner).repos || []);
+
     phase = 'contributions';
-    const owners = [...new Set(repos.map((repo) => repo.nameWithOwner.split('/')[0]))];
     const closedSince = new Date(Date.now() - closedWindowDays * 86400000).toISOString().slice(0, 10);
-    const contributions = await github.fetchContributions({ viewer, excludeOwners: owners, closedSince });
+    const contributions = await searchClient.fetchContributions({ viewer, excludeOwners: owners, closedSince });
+
     phase = 'build';
-    snapshot = buildSnapshot({ viewer, repos, ...contributions, options });
+    snapshot = { ...buildSnapshot({ viewer, repos, ...contributions, options }), ownerErrors: ownerErrors() };
 
     const durationMs = Date.now() - started;
-    const summary = { repos: repos.length, durationMs, rateLimit: github.rateLimit() };
+    const summary = { owners: owners.length, repos: repos.length, durationMs };
     if (consecutiveFailures > 0) {
       logger.info('refresh recovered', { ...summary, failedRefreshes: consecutiveFailures, failingSince });
     } else if (!lastSuccessAt) {
@@ -106,12 +156,11 @@ async function refresh() {
       lastSuccessAt,
       servingSnapshotFrom: snapshot?.generatedAt ?? null,
       durationMs: Date.now() - started,
-      rateLimit: github.rateLimit(),
       error,
     });
   } finally {
     refreshing = false;
-    checkRateLimit();
+    checkRateLimits();
   }
 }
 
@@ -148,6 +197,6 @@ Bun.serve({
   },
 });
 
-logger.info('listening', { port, refreshIntervalMs, ...options, closedWindowDays });
+logger.info('listening', { port, owners, renovateBot, refreshIntervalMs, ...options, closedWindowDays });
 refresh();
 setInterval(refresh, refreshIntervalMs);

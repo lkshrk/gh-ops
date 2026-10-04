@@ -2,12 +2,14 @@ import { test } from 'bun:test';
 import assert from 'node:assert/strict';
 import {
   attentionReasons,
+  parseRenovateDashboard,
+  renovateHealth,
   buildContributions,
   buildSnapshot,
   summarizeRenovate,
   summarizeWorkflows,
 } from './dashboard.js';
-import { GitHubError, createGitHubClient } from './github.js';
+import { GitHubError, createGitHubClient, parseOwnerTokens } from './github.js';
 import { createLogger } from './log.js';
 
 const me = { login: 'me', __typename: 'User' };
@@ -274,8 +276,8 @@ function recordingLogger() {
   return { lines, logger: createLogger({ level: 'debug', write: (line) => lines.push(JSON.parse(line)) }) };
 }
 
-test('fetchOwnRepos lists repositories, then fetches details in batches', async () => {
-  const names = Array.from({ length: 7 }, (_, i) => ({ owner: { login: 'me' }, name: `repo${i}` }));
+test('fetchOwnerRepos lists one owner\'s repositories, then fetches details in batches', async () => {
+  const names = Array.from({ length: 7 }, (_, i) => ({ name: `repo${i}` }));
   const detail = (body) =>
     jsonResponse({
       data: Object.fromEntries(
@@ -288,14 +290,15 @@ test('fetchOwnRepos lists repositories, then fetches details in batches', async 
       ),
     });
   const { calls, fetchImpl } = scriptedFetch([
-    jsonResponse({ data: { viewer: { repositories: { pageInfo: { hasNextPage: false }, nodes: names } } } }),
+    jsonResponse({ data: { repositoryOwner: { repositories: { pageInfo: { hasNextPage: false }, nodes: names } } } }),
     detail,
     detail,
   ]);
 
-  const repos = await createGitHubClient({ token: 't', fetchImpl }).fetchOwnRepos();
+  const repos = await createGitHubClient({ token: 't', fetchImpl }).fetchOwnerRepos('me');
 
   assert.equal(calls.length, 3);
+  assert.deepEqual(calls[0].variables, { owner: 'me', cursor: null });
   assert.deepEqual(repos.map((repo) => repo.nameWithOwner), names.map((repo) => `me/${repo.name}`));
   assert.deepEqual(repos.map((repo) => repo.hasRenovateConfig), [true, false, false, false, false, false, true]);
 });
@@ -425,4 +428,105 @@ test('logger drops lines below its level and serializes errors with cause', () =
   assert.equal(lines[0].error.status, 502);
   assert.equal(lines[0].error.cause.message, 'inner');
   assert.match(lines[0].error.stack, /outer/);
+});
+
+test('fetchOwnerRepos names the owner when its token cannot see it', async () => {
+  const { fetchImpl } = scriptedFetch([jsonResponse({ data: { repositoryOwner: null } })]);
+
+  const error = await createGitHubClient({ token: 't', fetchImpl }).fetchOwnerRepos('ghost-org').catch((caught) => caught);
+
+  assert.equal(error.owner, 'ghost-org');
+  assert.match(error.message, /ghost-org/);
+});
+
+test('parseOwnerTokens accepts an owner to token map and trims tokens', () => {
+  assert.deepEqual(parseOwnerTokens('{"me":" github_pat_a ","my-org":"github_pat_b"}'), {
+    me: 'github_pat_a',
+    'my-org': 'github_pat_b',
+  });
+});
+
+test('parseOwnerTokens rejects missing, malformed and empty configuration', () => {
+  assert.throws(() => parseOwnerTokens(undefined), /GITHUB_TOKENS is required/);
+  assert.throws(() => parseOwnerTokens('not json'), /JSON object/);
+  assert.throws(() => parseOwnerTokens('["github_pat_a"]'), /at least one owner/);
+  assert.throws(() => parseOwnerTokens('{}'), /at least one owner/);
+  assert.throws(() => parseOwnerTokens('{"me":"github_pat_a","my-org":""}'), /empty tokens for: my-org/);
+});
+
+const hCloudDashboard = [
+  'This issue lists Renovate updates and detected dependencies.',
+  '',
+  '## Repository Problems',
+  '',
+  'These problems occurred while renovating this repository.',
+  '',
+  ' - ⚠️ WARN: Package lookup failures',
+  '',
+  '## Pending Status Checks',
+  '',
+  ' - [ ] <!-- approvePr-branch=renovate/foo -->chore(deps): update foo',
+  '',
+  '> [!WARNING]',
+  '> Renovate failed to look up the following dependencies: `ghcr.io/lkshrk/hermes-hq: no-result`.',
+  '>',
+  '> Files affected: `kubernetes/apps/ai/hermes-hq/app/helmrelease.yaml`',
+  '',
+  '## Rate-Limited',
+  '',
+  ' - [ ] <!-- unlimit-branch=renovate/a -->update a',
+  ' - [ ] <!-- unlimit-branch=renovate/b -->update b',
+  ' - [ ] <!-- create-all-rate-limited-prs -->🔐 **Create all rate-limited PRs at once** 🔐',
+  '',
+  '## PR Edited (Blocked)',
+  '',
+  ' - [ ] <!-- rebase-branch=renovate/c -->[update c](../pull/61)',
+  '',
+  '## Open',
+  '',
+  ' - [ ] <!-- rebase-branch=renovate/d -->[update d](../pull/76)',
+  ' - [ ] <!-- rebase-all-open-prs -->**Click on this checkbox to rebase all open PRs at once**',
+  '',
+  '## Detected Dependencies',
+  '',
+  '> [!NOTE]',
+  '> Detected dependencies section has been truncated',
+  ' - `node 24-alpine`',
+].join('\n');
+
+test('parseRenovateDashboard extracts problems, warnings and section counts', () => {
+  const parsed = parseRenovateDashboard(hCloudDashboard);
+
+  assert.deepEqual(parsed.problems, ['WARN: Package lookup failures']);
+  assert.deepEqual(parsed.warnings, [
+    'Renovate failed to look up the following dependencies: `ghcr.io/lkshrk/hermes-hq: no-result`. Files affected: `kubernetes/apps/ai/hermes-hq/app/helmrelease.yaml`',
+  ]);
+  assert.deepEqual(parsed.counts, { pendingChecks: 1, rateLimited: 2, blocked: 1 });
+});
+
+test('renovateHealth rates problems as error, blocked PRs as warn and a clean dashboard as ok', () => {
+  const issue = (title, body = '') => ({ title, url: `https://github.com/me/app/issues/${title.length}`, body });
+  const withIssues = (...issues) => ({ renovateIssues: { nodes: issues } });
+
+  assert.equal(renovateHealth(withIssues(issue('Renovate Dashboard 🤖', hCloudDashboard))).severity, 'error');
+  assert.equal(renovateHealth(withIssues(issue('Renovate Dashboard', '## PR Edited (Blocked)\n - [ ] x'))).severity, 'warn');
+  assert.equal(renovateHealth(withIssues(issue('Renovate Dashboard', '## Open\n - [ ] x'))).severity, 'ok');
+  assert.equal(renovateHealth(withIssues()), null);
+
+  const config = renovateHealth(withIssues(issue('Action Required: Fix Renovate Configuration')));
+  assert.equal(config.severity, 'error');
+  assert.equal(config.configError.title, 'Action Required: Fix Renovate Configuration');
+  assert.equal(config.dashboardUrl, null);
+});
+
+test('summarizeRenovate keeps repositories whose only Renovate signal is a dashboard issue', () => {
+  const repo = repoWithCommits([], {
+    nameWithOwner: 'me/quiet',
+    renovateIssues: { nodes: [{ title: 'Renovate Dashboard', url: 'u', body: '## Repository Problems\n - ⚠️ WARN: x' }] },
+  });
+
+  const result = summarizeRenovate([repo]);
+
+  assert.deepEqual(result.onboarding, []);
+  assert.equal(result.repos[0].health.severity, 'error');
 });

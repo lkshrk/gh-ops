@@ -155,6 +155,80 @@ function summarizeWorkflows(repos, { failStreak = 3 } = {}) {
   return { failStreak, failing, recent };
 }
 
+const DASHBOARD_SECTIONS = {
+  Errored: 'errored',
+  'PR Edited (Blocked)': 'blocked',
+  'Rate-Limited': 'rateLimited',
+  'Awaiting Schedule': 'awaitingSchedule',
+  'Pending Approval': 'pendingApproval',
+  'Pending Status Checks': 'pendingChecks',
+};
+const BULK_ACTION = /<!-- (create-all-|rebase-all-|approve-all-|unlimit-all-|retry-all-)/;
+const ALERT_START = /^>\s*\[!(WARNING|CAUTION)\]/;
+
+function parseRenovateDashboard(body) {
+  const result = { problems: [], warnings: [], counts: {} };
+  let section = null;
+  let alert = null;
+
+  for (const line of String(body || '').split(/\r?\n/)) {
+    const heading = line.match(/^##\s+(.+?)\s*$/);
+    if (heading) {
+      section = heading[1];
+      alert = null;
+      continue;
+    }
+
+    if (ALERT_START.test(line)) {
+      alert = [];
+      result.warnings.push(alert);
+      continue;
+    }
+    if (alert && line.startsWith('>')) {
+      const text = line.replace(/^>\s?/, '').trim();
+      if (text) alert.push(text);
+      continue;
+    }
+    alert = null;
+
+    const item = line.match(/^\s*-\s+(.*)$/);
+    if (!item) continue;
+    if (section === 'Repository Problems') {
+      result.problems.push(item[1].replace(/^⚠️\s*/, '').trim());
+    } else if (DASHBOARD_SECTIONS[section] && !BULK_ACTION.test(item[1])) {
+      const key = DASHBOARD_SECTIONS[section];
+      result.counts[key] = (result.counts[key] || 0) + 1;
+    }
+  }
+
+  result.warnings = result.warnings.map((lines) => lines.join(' ')).filter(Boolean);
+  return result;
+}
+
+function renovateHealth(repo) {
+  const issues = nodes(repo.renovateIssues);
+  const dashboard = issues.find((issue) => /renovate dashboard|dependency dashboard/i.test(issue.title));
+  const configIssue = issues.find((issue) => /action required/i.test(issue.title));
+  if (!dashboard && !configIssue) return null;
+
+  const parsed = parseRenovateDashboard(dashboard?.body);
+  const severity =
+    configIssue || parsed.problems.length || parsed.warnings.length || parsed.counts.errored
+      ? 'error'
+      : parsed.counts.blocked
+        ? 'warn'
+        : 'ok';
+
+  return {
+    severity,
+    dashboardUrl: dashboard?.url || null,
+    configError: configIssue ? { title: configIssue.title, url: configIssue.url } : null,
+    problems: parsed.problems,
+    warnings: parsed.warnings,
+    counts: parsed.counts,
+  };
+}
+
 function summarizeRenovate(repos, { branchPrefix = 'renovate/', now = new Date() } = {}) {
   const isRenovate = (pr) => pr.headRefName.startsWith(branchPrefix);
   const isOnboarding = (pr) => pr.headRefName === `${branchPrefix}configure`;
@@ -184,12 +258,14 @@ function summarizeRenovate(repos, { branchPrefix = 'renovate/', now = new Date()
       ci: ciState(pr),
     }));
 
-    if (!repo.hasRenovateConfig && !lastMerged && open.length === 0) {
+    const health = renovateHealth(repo);
+
+    if (!repo.hasRenovateConfig && !lastMerged && open.length === 0 && !health) {
       untracked.push(repoMeta(repo));
       continue;
     }
 
-    if (!repo.hasRenovateConfig && !lastMerged && openRenovate.every(isOnboarding)) {
+    if (!repo.hasRenovateConfig && !lastMerged && openRenovate.length > 0 && openRenovate.every(isOnboarding)) {
       onboarding.push({ ...repoMeta(repo), pullRequest: open[0] });
       continue;
     }
@@ -202,6 +278,7 @@ function summarizeRenovate(repos, { branchPrefix = 'renovate/', now = new Date()
         : null,
       open,
       recentlyMerged: { automerged, manual: recentlyMerged.length - automerged },
+      health,
     });
   }
 
@@ -228,6 +305,8 @@ function buildSnapshot({ viewer, repos, openPullRequests, closedPullRequests, op
 
 export {
   attentionReasons,
+  parseRenovateDashboard,
+  renovateHealth,
   buildContributions,
   buildSnapshot,
   ciState,

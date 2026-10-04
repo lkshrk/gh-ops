@@ -69,8 +69,8 @@ function ciDot(ci) {
   return `<span class="dot ci-${ci}" title="${labels[ci]}" aria-label="${labels[ci]}"></span>`;
 }
 
-function chip(text, tone) {
-  return `<span class="chip ${tone}">${esc(text)}</span>`;
+function chip(text, tone, title = '') {
+  return `<span class="chip ${tone}"${title ? ` title="${esc(title)}"` : ''}>${esc(text)}</span>`;
 }
 
 function emptyState(text) {
@@ -167,6 +167,39 @@ function freshness(iso) {
   return 'fresh';
 }
 
+const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
+function healthChips(health) {
+  if (!health) return '';
+  const { counts } = health;
+  const findings = [...health.problems, ...health.warnings];
+  return [
+    health.configError ? chip('Config error', 'alert', health.configError.title) : '',
+    findings.length ? chip(plural(findings.length, 'problem'), 'alert', findings.join('\n')) : '',
+    counts.errored ? chip(`${counts.errored} errored`, 'alert') : '',
+    counts.blocked ? chip(`${counts.blocked} blocked`, 'warn', 'Edited Renovate branches halt their update group') : '',
+    counts.rateLimited ? chip(`${counts.rateLimited} rate-limited`, 'muted') : '',
+    counts.awaitingSchedule ? chip(`${counts.awaitingSchedule} scheduled`, 'muted') : '',
+    counts.pendingApproval ? chip(`${counts.pendingApproval} awaiting approval`, 'muted') : '',
+  ].join('');
+}
+
+function healthRows(health) {
+  if (!health || health.severity === 'ok') return '';
+  const row = (tone, html) => `<li class="sub-row health ${tone}"><span class="dot ci-${tone}"></span><span class="title">${html}</span></li>`;
+  return [
+    health.configError
+      ? row('failure', `<a href="${esc(health.configError.url)}">${esc(health.configError.title)}</a>`)
+      : '',
+    ...[...health.problems, ...health.warnings].map((text) => row('failure', esc(text))),
+    health.counts.errored ? row('failure', `${plural(health.counts.errored, 'branch')} errored`) : '',
+    health.counts.blocked
+      ? row('pending', `${plural(health.counts.blocked, 'branch')} edited by a human — Renovate stops updating that group until it is reset`)
+      : '',
+    health.dashboardUrl ? row('none', `<a href="${esc(health.dashboardUrl)}">Open Renovate Dashboard</a>`) : '',
+  ].join('');
+}
+
 function renovateRow(entry) {
   const tone = freshness(entry.lastMerged?.mergedAt);
   const last = entry.lastMerged
@@ -184,11 +217,12 @@ function renovateRow(entry) {
     <span class="age-badge ${tone}">${entry.lastMerged ? ago(entry.lastMerged.mergedAt) : 'never'}</span>
     <div class="row-main">
       ${ownRepo(entry, 'repo repo-title')}
-      <div class="meta">${last}${entry.hasConfig ? '' : chip('No config on default branch', 'muted')}</div>
+      <div class="meta">${last}${healthChips(entry.health)}${entry.hasConfig ? '' : chip('No config on default branch', 'muted')}</div>
     </div>
     <span class="open-count${entry.open.length ? '' : ' empty'}" title="${esc(entry.open.length ? countTitle : 'No open pull requests')}">${counts}</span>`;
 
-  if (entry.open.length === 0) {
+  const health = healthRows(entry.health);
+  if (entry.open.length === 0 && !health) {
     return `<li class="row reno">${head}<span class="chevron-space"></span></li>`;
   }
 
@@ -203,7 +237,7 @@ function renovateRow(entry) {
 
   return `<li class="reno-item"><details>
     <summary class="row reno">${head}<span class="chevron" aria-hidden="true"></span></summary>
-    <ul class="sub-rows">${prs}</ul>
+    <ul class="sub-rows">${health}${prs}</ul>
   </details></li>`;
 }
 
@@ -240,6 +274,7 @@ function renderKpis() {
   const pending = sum((entry) => entry.open.length);
   const autoRate = automerged + manual ? Math.round((automerged / (automerged + manual)) * 100) : null;
   const lagging = repos.filter(isLagging).length;
+  const troubled = repos.filter((entry) => entry.health && entry.health.severity !== 'ok').length;
 
   return `
     <div class="kpi ${attention.length ? 'alert' : 'calm'}">
@@ -252,10 +287,10 @@ function renderKpis() {
       <span class="kpi-value"><span class="${failing ? 'bad' : 'good'}">${failing}</span></span>
       <span class="kpi-sub">${data.workflows.failStreak}× in a row · ${recent} more failed recently</span>
     </div>
-    <div class="kpi ${lagging ? 'warn' : 'calm'}">
+    <div class="kpi ${lagging || troubled ? 'warn' : 'calm'}">
       <span class="kpi-label">Renovate</span>
       <span class="kpi-value"><span class="good">${repos.length - lagging}</span><span class="of">/</span><span class="${lagging ? 'lag' : ''}">${lagging}</span><span class="of">(${pending} open)</span></span>
-      <span class="kpi-sub">up to date / PRs open &gt; ${LAG_DAYS}d${autoRate === null ? '' : ` · ${autoRate}% automerged last ${data.renovate.stats.windowDays}d`}</span>
+      <span class="kpi-sub">up to date / PRs open &gt; ${LAG_DAYS}d${troubled ? ` · <span class="sub-alert">${plural(troubled, 'repo')} with Renovate issues</span>` : ''}${autoRate === null ? '' : ` · ${autoRate}% automerged last ${data.renovate.stats.windowDays}d`}</span>
     </div>`;
 }
 
@@ -279,10 +314,15 @@ function render() {
   document.getElementById('freshness').textContent = `${data.repoCount} repos · updated ${ago(data.generatedAt)} ago`;
 
   const banner = document.getElementById('banner');
-  banner.hidden = !data.error;
-  if (data.error) {
-    banner.textContent = `Last refresh failed ${ago(data.error.at)} ago: ${data.error.message}. Showing older data.`;
-  }
+  const problems = [
+    data.error ? `Last refresh failed ${ago(data.error.at)} ago: ${data.error.message}. Showing older data.` : null,
+    ...(data.ownerErrors || []).map(
+      (failure) =>
+        `${failure.owner}: ${failure.message} (failing for ${ago(failure.since)}; ${failure.dataFrom ? `showing data from ${ago(failure.dataFrom)} ago` : 'no data yet'}).`,
+    ),
+  ].filter(Boolean);
+  banner.hidden = problems.length === 0;
+  banner.textContent = problems.join(' ');
 }
 
 async function poll() {
