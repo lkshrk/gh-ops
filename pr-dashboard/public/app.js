@@ -81,7 +81,7 @@ function contributionRow(pr) {
   const chips = [
     pr.isDraft ? chip('Draft', 'muted') : '',
     ...pr.reasons.map((reason) => chip(REASON_LABELS[reason] || reason, 'alert')),
-    pr.state === 'OPEN' && pr.reviewDecision === 'APPROVED' ? chip('Approved', 'good') : '',
+    pr.state === 'OPEN' ? chip('Open', 'good') : '',
     pr.state === 'MERGED' ? chip('Merged', 'merged') : '',
     pr.state === 'CLOSED' ? chip('Closed', 'muted') : '',
   ].join('');
