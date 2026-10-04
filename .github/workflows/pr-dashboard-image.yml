@@ -12,6 +12,10 @@ permissions:
   contents: read
   packages: write
 
+concurrency:
+  group: pr-dashboard-image-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -33,6 +37,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: docker/build-push-action@v6
+        id: image
         with:
           context: .
           file: pr-dashboard/Dockerfile
@@ -41,3 +46,24 @@ jobs:
           tags: |
             ghcr.io/lkshrk/gh-ops/pr-dashboard:latest
             ghcr.io/lkshrk/gh-ops/pr-dashboard:${{ github.sha }}
+
+      - name: Create h-cloud deployment token
+        if: github.ref == 'refs/heads/main'
+        uses: actions/create-github-app-token@v3
+        id: deploy-token
+        with:
+          client-id: ${{ secrets.RENOVATE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RENOVATE_APP_PRIVATE_KEY }}
+          owner: lkshrk
+          repositories: h-cloud
+          permission-contents: write
+
+      - name: Deploy published image through h-cloud
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ steps.deploy-token.outputs.token }}
+          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+        run: |
+          jq -n --arg tag "latest@${IMAGE_DIGEST}" \
+            '{event_type: "image-update", client_payload: {app: "pr-dashboard", image: "ghcr.io/lkshrk/gh-ops/pr-dashboard", tag: $tag}}' \
+            | gh api --method POST repos/lkshrk/h-cloud/dispatches --input -
