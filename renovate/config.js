@@ -46,8 +46,8 @@ module.exports = {
 
   pruneStaleBranches: true,
 
-  // Repositories may refresh pins their own scripts compute (checksums, lock files) on Renovate branches.
-  allowedCommands: ['^bash scripts/refresh-pins\\.sh features/[a-z0-9-]+$'],
+  // One fixed entry point per repository; the script lives in the repository and gets only safe path arguments.
+  allowedCommands: ['^bash \\.renovate/post-upgrade\\.sh( [A-Za-z0-9][A-Za-z0-9._/-]*)*$'],
   
   timezone: 'Europe/Berlin',
 };
