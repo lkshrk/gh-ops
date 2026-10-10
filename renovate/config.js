@@ -45,6 +45,9 @@ module.exports = {
   prConcurrentLimit: 10,
 
   pruneStaleBranches: true,
+
+  // Repositories may refresh pins their own scripts compute (checksums, lock files) on Renovate branches.
+  allowedCommands: ['^command -v uv >/dev/null \\|\\| install-tool uv$', '^bash scripts/refresh-pins\\.sh features/[a-z0-9-]+$'],
   
   timezone: 'Europe/Berlin',
 };
