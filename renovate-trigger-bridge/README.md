@@ -1,7 +1,8 @@
 # renovate-trigger-bridge
 
 Webhook receiver that fires a GitHub `repository_dispatch` event when a Renovate
-dashboard checkbox is checked in a managed repository.
+dashboard checkbox is checked in a managed repository, or when a mapped repository
+publishes a container image.
 
 ## How it works
 
@@ -10,6 +11,12 @@ Issue comment) to `/github-webhook`. When the bridge detects a newly-checked
 Renovate trigger checkbox it POSTs a `repository_dispatch` to GitHub, which
 triggers the `renovate.yml` workflow with `RENOVATE_REPO_FILTER` set to the
 source repository.
+
+`registry_package.published` deliveries trigger a run for the consumer mapped to the
+publishing repository in `PACKAGE_TRIGGER_TARGETS`, so a self-published image is picked up
+minutes after it lands in GHCR instead of on the next scheduled run. A release that pushes
+several images sends one dispatch per image; the workflow's per-owner concurrency group
+collapses them into at most one running and one queued run, and the queued run sees every image.
 
 A GitHub App has a single webhook URL, so the bridge also fans deliveries out to
 an in-cluster OpenHands automation service that has no public ingress. Once the
@@ -35,6 +42,7 @@ at most one duplicate review.
 | `GITHUB_DISPATCH_TOKEN` | — | Required. Fine-grained PAT with Contents write on `lkshrk/gh-ops`. |
 | `DISPATCH_REPO` | `lkshrk/gh-ops` | Target repo for `repository_dispatch`. |
 | `EVENT_TYPE` | `renovate` | `event_type` sent in the dispatch payload. |
+| `PACKAGE_TRIGGER_TARGETS` | — | Comma-separated `source/repo=target/repo` pairs; a package published by `source/repo` triggers Renovate for `target/repo`. |
 | `PORT` | `3000` | HTTP listen port. |
 | `RENOVATE_BRIDGE_DRY_RUN` | `false` | Log but do not dispatch or forward. |
 | `OPENHANDS_EVENTS_URL` | — | Forward deliveries to this URL. Unset disables forwarding. |
@@ -54,7 +62,8 @@ Built automatically by `.github/workflows/bridge-image.yml` on push to `main`.
 ## GitHub App webhook
 
 Point the `renovate-master` App webhook at `https://<bridge-host>/github-webhook`
-and subscribe to: **Issues**, **Pull request**, **Issue comment**.
+and subscribe to: **Issues**, **Pull request**, **Issue comment**, **Registry package**.
+Registry package events need the App's **Packages: read** permission.
 
 ## k8s deployment
 
