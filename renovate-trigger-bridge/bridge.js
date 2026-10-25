@@ -103,8 +103,9 @@ function resolvePackageTrigger(repo, payload, packageTargets) {
     return { shouldTrigger: false, reason: `ignored action ${payload.action}` };
   }
 
-  const target = packageTargets.get(repo);
-  if (!target) {
+  const owner = repo.split('/')[0];
+  const target = packageTargets.get(repo) || packageTargets.get(`${owner}/*`);
+  if (!target || target === repo) {
     return { shouldTrigger: false, reason: `no package target for ${repo}` };
   }
 
