@@ -3,6 +3,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
   hasRenovateTriggerCheckbox,
+  parsePackageTargets,
   resolveTrigger,
   verifyGitHubSignature,
   buildBridgeLogEntry,
@@ -134,6 +135,54 @@ test('triggers when checkbox changes from unchecked to checked', () => {
     repository: 'lkshrk/h-cloud',
     reason: 'issues.edited',
   });
+});
+
+test('parses package trigger targets', () => {
+  const targets = parsePackageTargets(' lkshrk/agent-stack = lkshrk/h-cloud ,broken,,a/b=c/d');
+
+  assert.deepEqual([...targets], [
+    ['lkshrk/agent-stack', 'lkshrk/h-cloud'],
+    ['a/b', 'c/d'],
+  ]);
+});
+
+test('triggers the mapped consumer when a package is published', () => {
+  const trigger = resolveTrigger(
+    'registry_package',
+    {
+      action: 'published',
+      repository: { full_name: 'lkshrk/agent-stack' },
+      registry_package: { name: 'agent-stack/hermes', package_version: { version: '1.0.7' } },
+    },
+    { packageTargets: parsePackageTargets('lkshrk/agent-stack=lkshrk/h-cloud') },
+  );
+
+  assert.deepEqual(trigger, {
+    shouldTrigger: true,
+    repository: 'lkshrk/h-cloud',
+    reason: 'registry_package.published from lkshrk/agent-stack',
+  });
+});
+
+test('ignores packages from unmapped repositories and other actions', () => {
+  const packageTargets = parsePackageTargets('lkshrk/agent-stack=lkshrk/h-cloud');
+
+  assert.deepEqual(
+    resolveTrigger(
+      'registry_package',
+      { action: 'published', repository: { full_name: 'lkshrk/other' } },
+      { packageTargets },
+    ),
+    { shouldTrigger: false, reason: 'no package target for lkshrk/other' },
+  );
+  assert.deepEqual(
+    resolveTrigger(
+      'registry_package',
+      { action: 'updated', repository: { full_name: 'lkshrk/agent-stack' } },
+      { packageTargets },
+    ),
+    { shouldTrigger: false, reason: 'ignored action updated' },
+  );
 });
 
 test('verifies GitHub webhook signatures', () => {

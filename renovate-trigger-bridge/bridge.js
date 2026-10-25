@@ -86,10 +86,45 @@ function hasNewTriggerCheckbox(event, payload) {
   return currentLines.some((line) => !previousChecked.has(line));
 }
 
-function resolveTrigger(event, payload) {
+function parsePackageTargets(value) {
+  const targets = new Map();
+  for (const entry of String(value || '').split(',')) {
+    const [source, target] = entry.split('=').map((part) => part && part.trim());
+    if (source && target) {
+      targets.set(source, target);
+    }
+  }
+
+  return targets;
+}
+
+function resolvePackageTrigger(repo, payload, packageTargets) {
+  if (payload.action !== 'published') {
+    return { shouldTrigger: false, reason: `ignored action ${payload.action}` };
+  }
+
+  const target = packageTargets.get(repo);
+  if (!target) {
+    return { shouldTrigger: false, reason: `no package target for ${repo}` };
+  }
+
+  return {
+    shouldTrigger: true,
+    repository: target,
+    reason: `registry_package.published from ${repo}`,
+  };
+}
+
+function resolveTrigger(event, payload, options = {}) {
   const repo = repositoryFromPayload(payload);
   if (!repo) {
     return { shouldTrigger: false, reason: 'missing repository' };
+  }
+
+  if (event === 'registry_package') {
+    const packageTargets =
+      options.packageTargets || parsePackageTargets(process.env.PACKAGE_TRIGGER_TARGETS);
+    return resolvePackageTrigger(repo, payload, packageTargets);
   }
 
   if (!['issues', 'pull_request', 'issue_comment'].includes(event)) {
@@ -288,6 +323,7 @@ module.exports = {
   reviewKey,
   hasRenovateTriggerCheckbox,
   logBridgeEvent,
+  parsePackageTargets,
   resolveTrigger,
   triggerDispatch,
   verifyGitHubSignature,
