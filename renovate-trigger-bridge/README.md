@@ -42,7 +42,7 @@ at most one duplicate review.
 | `GITHUB_DISPATCH_TOKEN` | — | Required. Fine-grained PAT with Contents write on `lkshrk/gh-ops`. |
 | `DISPATCH_REPO` | `lkshrk/gh-ops` | Target repo for `repository_dispatch`. |
 | `EVENT_TYPE` | `renovate` | `event_type` sent in the dispatch payload. |
-| `PACKAGE_TRIGGER_TARGETS` | — | Comma-separated `source/repo=target/repo` pairs; a package published by `source/repo` triggers Renovate for `target/repo`. |
+| `PACKAGE_TRIGGER_TARGETS` | — | Comma-separated `source/repo=target/repo` pairs; a package published by `source/repo` triggers Renovate for `target/repo`. `owner/*` matches every repository of that owner; an exact pair wins over the wildcard. |
 | `PORT` | `3000` | HTTP listen port. |
 | `RENOVATE_BRIDGE_DRY_RUN` | `false` | Log but do not dispatch or forward. |
 | `OPENHANDS_EVENTS_URL` | — | Forward deliveries to this URL. Unset disables forwarding. |

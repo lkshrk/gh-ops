@@ -164,6 +164,21 @@ test('triggers the mapped consumer when a package is published', () => {
   });
 });
 
+test('owner wildcard maps every repository of that owner except the target itself', () => {
+  const packageTargets = parsePackageTargets('lkshrk/*=lkshrk/h-cloud,lkshrk/special=lkshrk/other');
+  const resolve = (repo) =>
+    resolveTrigger(
+      'registry_package',
+      { action: 'published', repository: { full_name: repo } },
+      { packageTargets },
+    );
+
+  assert.equal(resolve('lkshrk/cms-sidecar').repository, 'lkshrk/h-cloud');
+  assert.equal(resolve('lkshrk/special').repository, 'lkshrk/other');
+  assert.equal(resolve('lkshrk/h-cloud').shouldTrigger, false);
+  assert.equal(resolve('routivo/backend').shouldTrigger, false);
+});
+
 test('ignores packages from unmapped repositories and other actions', () => {
   const packageTargets = parsePackageTargets('lkshrk/agent-stack=lkshrk/h-cloud');
 
