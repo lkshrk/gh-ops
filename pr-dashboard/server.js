@@ -1,7 +1,8 @@
 import path from 'node:path';
-import { buildSnapshot } from './dashboard.js';
+import { buildSnapshot, isDoneValid } from './dashboard.js';
 import { createGitHubClient, parseOwnerTokens } from './github.js';
 import { createLogger } from './log.js';
+import { createDoneStore } from './store.js';
 
 const logger = createLogger({ level: process.env.LOG_LEVEL || 'info' });
 
@@ -34,12 +35,14 @@ try {
   process.exit(1);
 }
 const owners = Object.keys(clients);
+const doneStore = createDoneStore({ file: process.env.STATE_FILE || null, logger });
 
 const publicDir = path.join(import.meta.dir, 'public');
 const assets = {
   '/': 'index.html',
   '/app.js': 'app.js',
   '/style.css': 'style.css',
+  '/favicon.svg': 'favicon.svg',
 };
 
 const securityHeaders = {
@@ -52,6 +55,7 @@ const securityHeaders = {
 
 let viewer = null;
 let snapshot = null;
+let lastBuild = null;
 let lastError = null;
 let refreshing = false;
 let lastSuccessAt = null;
@@ -126,7 +130,9 @@ async function refresh() {
     const contributions = await searchClient.fetchContributions({ viewer, excludeOwners: owners, closedSince });
 
     phase = 'build';
-    snapshot = { ...buildSnapshot({ viewer, repos, ...contributions, options }), ownerErrors: ownerErrors() };
+    lastBuild = { viewer, repos, ...contributions, options, now: new Date(), ownerErrors: ownerErrors() };
+    rebuildSnapshot();
+    pruneDoneFlags();
 
     const durationMs = Date.now() - started;
     const summary = { owners: owners.length, repos: repos.length, durationMs };
@@ -164,20 +170,63 @@ async function refresh() {
   }
 }
 
+function rebuildSnapshot() {
+  const { ownerErrors: errors, ...input } = lastBuild;
+  snapshot = { ...buildSnapshot({ ...input, done: doneStore.all() }), ownerErrors: errors };
+}
+
+function openContributions() {
+  return snapshot ? [...snapshot.contributions.attention, ...snapshot.contributions.open] : [];
+}
+
+function pruneDoneFlags() {
+  const byUrl = new Map(openContributions().map((pr) => [pr.url, pr]));
+  try {
+    doneStore.retain((url, entry) => byUrl.has(url) && isDoneValid(byUrl.get(url), entry));
+  } catch (error) {
+    logger.error('could not prune done flags', { file: process.env.STATE_FILE, error });
+  }
+}
+
 function json(status, body) {
   return Response.json(body, { status, headers: securityHeaders });
+}
+
+function dataResponse() {
+  if (!snapshot) return json(503, { error: lastError?.message || 'warming up' });
+  return json(200, { ...snapshot, refreshIntervalMs, error: lastError });
+}
+
+// Requiring a JSON body forces a CORS preflight, which this server never answers, so other sites cannot post.
+async function markDone(request) {
+  if (request.headers.get('content-type')?.split(';')[0].trim() !== 'application/json') {
+    return json(415, { error: 'expected application/json' });
+  }
+  const site = request.headers.get('sec-fetch-site');
+  if (site && site !== 'same-origin') return json(403, { error: 'cross-site request' });
+
+  const body = await request.json().catch(() => null);
+  if (typeof body?.url !== 'string' || typeof body?.done !== 'boolean') {
+    return json(400, { error: 'expected {"url": string, "done": boolean}' });
+  }
+  const pullRequest = openContributions().find((pr) => pr.url === body.url);
+  if (!pullRequest) return json(404, { error: 'no open contribution with that url' });
+
+  if (body.done) doneStore.set(body.url, { feedbackAt: pullRequest.feedbackAt, markedAt: new Date().toISOString() });
+  else doneStore.delete(body.url);
+  rebuildSnapshot();
+  return dataResponse();
 }
 
 function route(request) {
   const { pathname } = new URL(request.url);
 
+  if (pathname === '/contributions/done') {
+    return request.method === 'POST' ? markDone(request) : json(405, { error: 'method not allowed' });
+  }
   if (request.method !== 'GET') return json(405, { error: 'method not allowed' });
   if (pathname === '/healthz') return json(200, { ok: true });
-
-  if (pathname === '/data.json') {
-    if (!snapshot) return json(503, { error: lastError?.message || 'warming up' });
-    return json(200, { ...snapshot, refreshIntervalMs, error: lastError });
-  }
+  if (pathname === '/data.json') return dataResponse();
 
   const asset = assets[pathname];
   if (asset) return new Response(Bun.file(path.join(publicDir, asset)), { headers: securityHeaders });
@@ -187,9 +236,9 @@ function route(request) {
 
 Bun.serve({
   port,
-  fetch(request) {
+  async fetch(request) {
     try {
-      return route(request);
+      return await route(request);
     } catch (error) {
       logger.error('request failed', { method: request.method, url: request.url, error });
       return json(500, { error: 'internal error' });
@@ -197,6 +246,14 @@ Bun.serve({
   },
 });
 
-logger.info('listening', { port, owners, renovateBot, refreshIntervalMs, ...options, closedWindowDays });
+logger.info('listening', {
+  port,
+  owners,
+  renovateBot,
+  refreshIntervalMs,
+  ...options,
+  closedWindowDays,
+  stateFile: process.env.STATE_FILE || null,
+});
 refresh();
 setInterval(refresh, refreshIntervalMs);

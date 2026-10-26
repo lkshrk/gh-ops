@@ -4,7 +4,9 @@ Live, single-page dashboard over everything you maintain or contribute to on Git
 
 1. **Contributions**: your open pull requests to other people's projects, split into *Needs you*
    (failing CI, changes requested, or a human spoke after your last push/comment, including
-   unresolved review threads), *Open, waiting on others*, and *Recently closed*.
+   unresolved review threads), *Open, waiting on others*, and *Recently closed*. **Done** on a
+   *Needs you* pull request moves it to *Open* until a human other than you comments, reviews or
+   opens a review thread on it again; then it returns to *Needs you* and the flag is dropped.
 2. **Failing workflows**: default-branch GitHub Actions workflows across your own and your
    organizations' repositories whose latest `FAIL_STREAK` runs all failed, with a run strip and
    the date the streak started. Workflows with a shorter red streak sit in a collapsed list.
@@ -26,7 +28,7 @@ Own repositories are those the token's user owns or reaches as an organization m
 Renovate pull requests are recognised by their head branch prefix, because a self-hosted
 Renovate App does not show up as `app/renovate`.
 
-There is no authentication in the app. Put it behind a forward-auth proxy (Authentik on h-cloud).
+There is no authentication in the app; anyone who reaches it can set *Done* flags. Put it behind a forward-auth proxy (Authentik on h-cloud).
 
 ## Environment variables
 
@@ -40,6 +42,7 @@ There is no authentication in the app. Put it behind a forward-auth proxy (Authe
 | `RENOVATE_BRANCH_PREFIX` | `renovate/` | Head branch prefix of Renovate pull requests. |
 | `CLOSED_WINDOW_DAYS` | `30` | How far back *Recently closed* reaches. |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error`. |
+| `STATE_FILE` | — | JSON file that keeps *Done* flags across restarts. Unset keeps them in memory only. |
 
 ### Tokens
 
@@ -86,6 +89,7 @@ enough context to act on without reproducing:
 |---|---|
 | `/` | Dashboard |
 | `/data.json` | Latest snapshot; `503` until the first refresh succeeds |
+| `POST /contributions/done` | `{"url": "<pull request url>", "done": true\|false}`; returns the updated snapshot. Only same-origin `application/json` requests are accepted |
 | `/healthz` | Liveness; `bun pr-dashboard/healthcheck.js` probes it from inside the distroless image |
 
 ## Development

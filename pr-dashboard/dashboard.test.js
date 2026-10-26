@@ -7,11 +7,17 @@ import {
   renovateHealth,
   buildContributions,
   buildSnapshot,
+  isDoneValid,
+  summarizeContribution,
   summarizeRenovate,
   summarizeWorkflows,
 } from './dashboard.js';
 import { GitHubError, createGitHubClient, parseOwnerTokens } from './github.js';
 import { createLogger } from './log.js';
+import { createDoneStore } from './store.js';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 
 const me = { login: 'me', __typename: 'User' };
 const maintainer = { login: 'maintainer', __typename: 'User' };
@@ -104,6 +110,59 @@ test('buildContributions splits open pull requests by attention and orders close
   assert.deepEqual(result.open.map((pr) => pr.number), [1]);
   assert.deepEqual(result.closed.map((pr) => pr.number), [4, 3]);
 });
+
+test('buildContributions moves a pull request marked done to open until new feedback arrives', () => {
+  const comment = (createdAt) => ({ createdAt, author: maintainer });
+  const marked = { feedbackAt: '2026-09-03T00:00:00Z', markedAt: '2026-09-04T00:00:00Z' };
+  const handled = pullRequest({ number: 1, comments: { nodes: [comment('2026-09-03T00:00:00Z')] } });
+  const answeredAgain = pullRequest({
+    number: 2,
+    url: 'https://github.com/up/stream/pull/2',
+    comments: { nodes: [comment('2026-09-03T00:00:00Z'), comment('2026-09-06T00:00:00Z')] },
+  });
+  const newThread = pullRequest({
+    number: 3,
+    url: 'https://github.com/up/stream/pull/3',
+    comments: { nodes: [comment('2026-09-03T00:00:00Z')] },
+    reviewThreads: { nodes: [{ isResolved: false, comments: { nodes: [comment('2026-09-07T00:00:00Z')] } }] },
+  });
+  const done = Object.fromEntries([handled, answeredAgain, newThread].map((pr) => [pr.url, marked]));
+
+  const result = buildContributions([handled, answeredAgain, newThread], [], 'me', done);
+
+  assert.deepEqual(result.open.map((pr) => [pr.number, pr.done, pr.reasons]), [[1, true, ['awaiting-reply']]]);
+  assert.deepEqual(result.attention.map((pr) => [pr.number, pr.done]).sort(), [[2, false], [3, false]]);
+  assert.equal(result.attention.find((pr) => pr.number === 3).feedbackAt, '2026-09-07T00:00:00Z');
+});
+
+test('isDoneValid keeps a flag set before any human feedback until the first comment', () => {
+  const red = summarize({ commits: { nodes: [{ commit: { committedDate: '2026-09-02T00:00:00Z', statusCheckRollup: { state: 'FAILURE' } } }] } });
+  assert.equal(red.feedbackAt, null);
+  assert.equal(isDoneValid(red, { feedbackAt: null }), true);
+  assert.equal(isDoneValid({ ...red, feedbackAt: '2026-09-08T00:00:00Z' }, { feedbackAt: null }), false);
+  assert.equal(isDoneValid({ ...red, state: 'MERGED' }, { feedbackAt: null }), false);
+  assert.equal(isDoneValid(red, undefined), false);
+});
+
+test('done store persists flags and drops the ones it is told not to keep', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'pr-dashboard-'));
+  const file = path.join(dir, 'state', 'done.json');
+  const logger = createLogger({ level: 'error', write() {} });
+
+  const store = createDoneStore({ file, logger });
+  store.set('a', { feedbackAt: null });
+  store.set('b', { feedbackAt: '2026-09-01T00:00:00Z' });
+  store.retain((url) => url !== 'a');
+  assert.deepEqual(createDoneStore({ file, logger }).all(), { b: { feedbackAt: '2026-09-01T00:00:00Z' } });
+
+  store.delete('b');
+  assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')), {});
+  rmSync(dir, { recursive: true });
+});
+
+function summarize(overrides) {
+  return summarizeContribution(pullRequest(overrides), 'me');
+}
 
 function run(workflow, conclusion, createdAt, overrides = {}) {
   return {

@@ -77,10 +77,19 @@ function emptyState(text) {
   return `<p class="empty">${esc(text)}</p>`;
 }
 
+function doneControl(pr) {
+  if (pr.done) {
+    return `<button type="button" class="done-toggle undo" data-url="${esc(pr.url)}" data-done="false" title="Move back to Needs you">Undo</button>`;
+  }
+  if (pr.state !== 'OPEN' || !pr.reasons?.length) return '';
+  return `<button type="button" class="done-toggle" data-url="${esc(pr.url)}" data-done="true" title="Move to Open until someone gives new feedback">Done</button>`;
+}
+
 function contributionRow(pr) {
   const chips = [
     pr.isDraft ? chip('Draft', 'muted') : '',
-    ...pr.reasons.map((reason) => chip(REASON_LABELS[reason] || reason, 'alert')),
+    pr.done ? chip('Handled', 'good', 'Marked done; returns to Needs you on new feedback') : '',
+    ...pr.reasons.map((reason) => chip(REASON_LABELS[reason] || reason, pr.done ? 'muted' : 'alert')),
     pr.state === 'OPEN' ? chip('Open', 'good') : '',
     pr.state === 'MERGED' ? chip('Merged', 'merged') : '',
     pr.state === 'CLOSED' ? chip('Closed', 'muted') : '',
@@ -94,6 +103,7 @@ function contributionRow(pr) {
       <a class="title" href="${esc(pr.url)}">${esc(pr.title)}</a>
       <div class="meta">${avatar}<span class="upstream">${esc(pr.repo)}</span><span class="num">#${pr.number}</span>${chips}</div>
     </div>
+    ${doneControl(pr)}
     <span class="age">${when(stamp)}</span>
   </li>`;
 }
@@ -325,13 +335,35 @@ function render() {
   banner.textContent = problems.join(' ');
 }
 
+async function load(request) {
+  const response = await request;
+  const body = await response.json();
+  if (!response.ok) throw new Error(body.error || response.statusText);
+  data = body;
+  render();
+}
+
+async function setDone(button) {
+  button.disabled = true;
+  try {
+    await load(
+      fetch('contributions/done', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: button.dataset.url, done: button.dataset.done === 'true' }),
+      }),
+    );
+  } catch (error) {
+    button.disabled = false;
+    const banner = document.getElementById('banner');
+    banner.hidden = false;
+    banner.textContent = `Could not update the pull request: ${error.message}`;
+  }
+}
+
 async function poll() {
   try {
-    const response = await fetch('data.json', { cache: 'no-store' });
-    const body = await response.json();
-    if (!response.ok) throw new Error(body.error || response.statusText);
-    data = body;
-    render();
+    await load(fetch('data.json', { cache: 'no-store' }));
   } catch (error) {
     const banner = document.getElementById('banner');
     banner.hidden = false;
@@ -341,6 +373,11 @@ async function poll() {
 }
 
 document.addEventListener('click', (event) => {
+  const toggle = event.target.closest('.done-toggle');
+  if (toggle) {
+    setDone(toggle);
+    return;
+  }
   const button = event.target.closest('.owner-filter');
   if (!button) return;
   const { owner } = button.dataset;

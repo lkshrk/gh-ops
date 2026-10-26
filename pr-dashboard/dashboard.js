@@ -22,9 +22,7 @@ function ciState(pullRequest) {
   return 'none';
 }
 
-function attentionReasons(pullRequest, viewer) {
-  if (pullRequest.state !== 'OPEN') return [];
-
+function activity(pullRequest, viewer) {
   const isMe = (author) => author?.login === viewer;
   const isOther = (author) => author && !isMe(author) && author.__typename !== 'Bot';
   const reviews = nodes(pullRequest.reviews);
@@ -33,6 +31,7 @@ function attentionReasons(pullRequest, viewer) {
     .filter((thread) => !thread.isResolved)
     .map((thread) => nodes(thread.comments).at(-1))
     .filter(Boolean);
+  const othersThreadTails = threadTails.filter((comment) => isOther(comment.author));
 
   const myLast = latest([
     nodes(pullRequest.commits)[0]?.commit?.committedDate,
@@ -46,8 +45,19 @@ function attentionReasons(pullRequest, viewer) {
       .map((review) => review.submittedAt),
     ...comments.filter((comment) => isOther(comment.author)).map((comment) => comment.createdAt),
   ]);
-  const openThreads = threadTails.filter((comment) => isOther(comment.author)).length;
 
+  return {
+    myLast,
+    othersLast,
+    openThreads: othersThreadTails.length,
+    feedbackAt: latest([othersLast, ...othersThreadTails.map((comment) => comment.createdAt)]),
+  };
+}
+
+function attentionReasons(pullRequest, viewer) {
+  if (pullRequest.state !== 'OPEN') return [];
+
+  const { myLast, othersLast, openThreads } = activity(pullRequest, viewer);
   const reasons = [];
   if (ciState(pullRequest) === 'failure') reasons.push('ci-failing');
   if (pullRequest.reviewDecision === 'CHANGES_REQUESTED') reasons.push('changes-requested');
@@ -74,16 +84,24 @@ function summarizeContribution(pullRequest, viewer) {
     closedAt: pullRequest.closedAt || null,
     mergedAt: pullRequest.mergedAt || null,
     reasons: attentionReasons(pullRequest, viewer),
+    feedbackAt: activity(pullRequest, viewer).feedbackAt,
   };
 }
 
-function buildContributions(openPullRequests, closedPullRequests, viewer) {
+function isDoneValid(pr, entry) {
+  return Boolean(entry) && pr.state === 'OPEN' && (pr.feedbackAt || '') <= (entry.feedbackAt || '');
+}
+
+function buildContributions(openPullRequests, closedPullRequests, viewer, done = {}) {
   const byUpdated = (a, b) => b.updatedAt.localeCompare(a.updatedAt);
-  const open = openPullRequests.map((pr) => summarizeContribution(pr, viewer)).sort(byUpdated);
+  const open = openPullRequests
+    .map((pr) => summarizeContribution(pr, viewer))
+    .map((pr) => ({ ...pr, done: pr.reasons.length > 0 && isDoneValid(pr, done[pr.url]) }))
+    .sort(byUpdated);
 
   return {
-    attention: open.filter((pr) => pr.reasons.length > 0),
-    open: open.filter((pr) => pr.reasons.length === 0),
+    attention: open.filter((pr) => pr.reasons.length > 0 && !pr.done),
+    open: open.filter((pr) => pr.reasons.length === 0 || pr.done),
     closed: closedPullRequests
       .map((pr) => summarizeContribution(pr, viewer))
       .sort((a, b) => (b.closedAt || '').localeCompare(a.closedAt || '')),
@@ -298,13 +316,13 @@ function ownerOrder(repos, viewer) {
   return owners.sort((a, b) => (a === viewer ? -1 : b === viewer ? 1 : a.localeCompare(b)));
 }
 
-function buildSnapshot({ viewer, repos, openPullRequests, closedPullRequests, options = {}, now = new Date() }) {
+function buildSnapshot({ viewer, repos, openPullRequests, closedPullRequests, done = {}, options = {}, now = new Date() }) {
   return {
     generatedAt: now.toISOString(),
     viewer,
     owners: ownerOrder(repos, viewer),
     repoCount: repos.length,
-    contributions: buildContributions(openPullRequests, closedPullRequests, viewer),
+    contributions: buildContributions(openPullRequests, closedPullRequests, viewer, done),
     workflows: summarizeWorkflows(repos, options),
     renovate: summarizeRenovate(repos, { ...options, now }),
   };
@@ -318,6 +336,7 @@ export {
   buildContributions,
   buildSnapshot,
   ciState,
+  isDoneValid,
   ownerOrder,
   summarizeContribution,
   summarizeRenovate,
