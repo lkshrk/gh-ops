@@ -1,0 +1,37 @@
+{
+  $schema: "https://docs.renovatebot.com/renovate-schema.json",
+  description: "GitHub Actions and runner images: update any time, group non-majors, open majors as PRs",
+  customManagers: [
+    {
+      customType: "regex",
+      description: "Blacksmith runner labels follow the GitHub-hosted Ubuntu images",
+      managerFilePatterns: ["/(^|/)\\.github/(workflows|actions)/.+\\.ya?ml$/"],
+      matchStrings: [
+        "(?<prefix>blacksmith-\\d+vcpu-ubuntu-)(?<major>\\d{2})(?<minor>\\d{2})(?<arch>-arm)?\\b",
+      ],
+      depNameTemplate: "blacksmith-ubuntu",
+      packageNameTemplate: "ubuntu",
+      datasourceTemplate: "github-runners",
+      versioningTemplate: "docker",
+      currentValueTemplate: "{{{major}}}.{{{minor}}}{{{arch}}}",
+      autoReplaceStringTemplate: "{{{prefix}}}{{{replace '\\.' '' newValue}}}",
+    },
+  ],
+  packageRules: [
+    {
+      matchFileNames: [".github/workflows/**", ".github/actions/**"],
+      schedule: ["at any time"],
+    },
+    {
+      matchFileNames: [".github/workflows/**", ".github/actions/**"],
+      matchUpdateTypes: ["minor", "patch", "digest", "pin", "pinDigest"],
+      groupName: "github actions",
+    },
+    {
+      matchFileNames: [".github/workflows/**", ".github/actions/**"],
+      matchUpdateTypes: ["major"],
+      dependencyDashboardApproval: false,
+      automerge: false,
+    },
+  ],
+}
