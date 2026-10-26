@@ -110,9 +110,23 @@ Use these repo-local configs:
 { extends: ["github>lkshrk/gh-ops//renovate/presets/gitops.json5"] }
 ```
 
+All three include `github-actions.json5`. Repos with a standalone config add it
+to their `extends`; repos that only want action and runner updates use:
+
+```json5
+{
+  extends: ["github>lkshrk/gh-ops//renovate/presets/github-actions.json5"],
+  enabledManagers: ["github-actions", "custom.regex"],
+}
+```
+
 ## Policy
 
 - patch, minor, pin, and digest updates may automerge after checks pass
 - major updates require Dependency Dashboard approval before automerge
+- GitHub Actions and runner images (including Blacksmith `blacksmith-*-ubuntu-*`
+  labels) update at any time regardless of the repo schedule; non-majors are
+  grouped into one PR, majors open their own PR without approval and never
+  automerge
 - no global `ignoreTests`
 - repo-specific exceptions stay in the target repo config
