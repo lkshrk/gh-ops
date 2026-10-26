@@ -29,6 +29,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: docker/build-push-action@v7
+        id: image
         with:
           context: .
           file: renovate-trigger-bridge/Dockerfile
@@ -37,3 +38,24 @@ jobs:
           tags: |
             ghcr.io/lkshrk/gh-ops/renovate-trigger-bridge:latest
             ghcr.io/lkshrk/gh-ops/renovate-trigger-bridge:${{ github.sha }}
+
+      - name: Create h-cloud deployment token
+        if: github.ref == 'refs/heads/main'
+        uses: actions/create-github-app-token@v3
+        id: deploy-token
+        with:
+          client-id: ${{ secrets.RENOVATE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RENOVATE_APP_PRIVATE_KEY }}
+          owner: lkshrk
+          repositories: h-cloud
+          permission-contents: write
+
+      - name: Deploy published image through h-cloud
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ steps.deploy-token.outputs.token }}
+          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+        run: |
+          jq -n --arg tag "latest@${IMAGE_DIGEST}" \
+            '{event_type: "image-update", client_payload: {app: "renovate-trigger-bridge", image: "ghcr.io/lkshrk/gh-ops/renovate-trigger-bridge", tag: $tag}}' \
+            | gh api --method POST repos/lkshrk/h-cloud/dispatches --input -
