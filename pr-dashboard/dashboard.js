@@ -329,7 +329,12 @@ function summarizeRenovate(repos, { branchPrefix = 'renovate/', now = new Date()
     });
   }
 
-  tracked.sort((a, b) => (b.lastCommit?.committedDate || '').localeCompare(a.lastCommit?.committedDate || '') || a.repo.localeCompare(b.repo));
+  tracked.sort((a, b) => {
+    const aDate = a.lastCommit?.committedDate;
+    const bDate = b.lastCommit?.committedDate;
+    if (!aDate || !bDate) return Number(Boolean(bDate)) - Number(Boolean(aDate)) || a.repo.localeCompare(b.repo);
+    return aDate.localeCompare(bDate) || a.repo.localeCompare(b.repo);
+  });
   return { branchPrefix, stats, repos: tracked, onboarding, untracked };
 }
 

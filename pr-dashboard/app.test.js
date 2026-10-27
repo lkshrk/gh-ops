@@ -236,7 +236,7 @@ test('subscriptions escape text and show type/state/unread, warnings and unavail
     ] };
   await ui.show(snapshot);
   const html = ui.document.querySelector('#subscriptions .panel-body').innerHTML;
-  for (const value of ['&#60;title&#62;', '&#60;repo&#62;', '&#60;error&#62;', '&#60;lookup&#62;', 'Issue', 'Pull request', 'Discussion', 'Open', 'Merged', 'Unread', 'Unknown', 'truncated', '2']) assert.ok(html.includes(value), value);
+  for (const value of ['&#60;title&#62;', '&#60;repo&#62;', '&#60;error&#62;', '&#60;lookup&#62;', 'Issue', 'Pull request', 'Discussion', 'Open', 'Merged', 'Unread', 'Unknown', 'truncated']) assert.ok(html.includes(value), value);
   assert.doesNotMatch(html, /<title>|<error>|<lookup>/);
   assert.equal((html.match(/class="unsubscribe"/g) || []).length, 0);
   snapshot.subscriptions = { ...snapshot.subscriptions, error: null, items: [] };

@@ -13,7 +13,7 @@ Live, single-page dashboard over everything you maintain or contribute to on Git
 3. **Failing workflows**: default-branch GitHub Actions workflows across your own and your
    organizations' repositories whose latest `FAIL_STREAK` runs all failed, with a run strip and
    the date the streak started. Workflows with a shorter red streak sit in a collapsed list.
-4. **Renovate**: repositories ranked by their most recent Renovate commit on the default branch first, with the
+4. **Renovate**: repositories ranked by their last Renovate commit on the default branch, oldest first, with the
    open Renovate pull requests and their CI state. Pending onboarding PRs and repositories
    without Renovate are listed separately.
 
@@ -119,7 +119,8 @@ supplies this variable.
 ### Renovate health
 
 Repository ordering and the **last Renovate commit** link/age use `committedDate` from the
-default branch's **last 100 commits** (including its head), newest first. A commit qualifies
+default branch's **last 100 commits** (including its head). Repositories are ordered by their latest
+matching commit, **oldest first**, so those waiting longest for an update appear first. A commit qualifies
 when its GitHub-linked author matches `RENOVATE_BOT_LOGIN`, or one of its **first five associated
 pull requests** is merged, has `RENOVATE_BRANCH_PREFIX`, and targets this repository's current
 default branch. This also recognises human-authored merge/squash commits through their PR.

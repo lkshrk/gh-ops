@@ -68,7 +68,7 @@
   display: flex;
   padding: 6px 6px 0;
   overflow-x: auto;
-  background: linear-gradient(var(--line), var(--line)) bottom / 100% 1px no-repeat, var(--panel-2);
+  background: linear-gradient(var(--line), var(--line)) bottom / 100% 1px no-repeat;
 }
 .tabs button {
   flex: none;
@@ -85,8 +85,8 @@
   color: var(--link);
   border-color: var(--line);
   border-top-color: var(--link);
-  border-bottom-color: var(--panel);
-  background: var(--panel);
+  border-bottom-color: var(--info-bg);
+  background: var(--info-bg);
 }
 .tabs button:focus-visible, .panel:focus-visible { outline-offset: -3px; }
 :focus-visible { outline: 2px solid var(--link); outline-offset: 2px; }

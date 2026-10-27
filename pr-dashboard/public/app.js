@@ -161,13 +161,12 @@ function subscriptionRow(item) {
 function renderSubscriptions() {
   const subscriptions = data.subscriptions;
   if (!subscriptions) return emptyState('Subscriptions unavailable.');
-  const { items, error, warnings, truncated, hidden, canUnsubscribe } = subscriptions;
+  const { items, error, warnings, truncated, canUnsubscribe } = subscriptions;
   return [
     !canUnsubscribe && !error ? emptyState('Subscriptions unavailable: notifications access is not configured.') : '',
     error ? `<p class="subscription-notice" role="status">${esc(error)}${items.length ? ' · Showing previously fetched subscriptions.' : ''}</p>` : '',
     ...(warnings || []).map((warning) => `<p class="subscription-notice">${esc(warning)}</p>`),
     truncated ? '<p class="subscription-notice">Results truncated: only part of your subscriptions could be fetched.</p>' : '',
-    hidden ? emptyState(`${hidden} closed or merged threads older than seven days hidden.`) : '',
     items.length ? `<ul class="rows">${items.map(subscriptionRow).join('')}</ul>` : canUnsubscribe && !error ? emptyState('No manual subscriptions to show.') : '',
   ].join('');
 }

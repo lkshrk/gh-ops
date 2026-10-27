@@ -257,7 +257,7 @@ function renovatePr(number, extra = {}) {
   return { number, title: `Update dep ${number}`, url: `https://github.com/me/app/pull/${number}`, headRefName: `renovate/dep-${number}`, ...extra };
 }
 
-test('summarizeRenovate ranks newest default-branch Renovate commit first, independently of merge dates', () => {
+test('summarizeRenovate ranks oldest last default-branch Renovate commit first, independently of merge dates', () => {
   const fresh = repoWithRuns([], {
     nameWithOwner: 'me/fresh',
     hasRenovateConfig: true,
@@ -301,11 +301,11 @@ test('summarizeRenovate ranks newest default-branch Renovate commit first, indep
 
   const { repos } = summarizeRenovate([never, fresh, stale]);
 
-  assert.deepEqual(repos.map((repo) => repo.repo), ['org/stale', 'me/fresh', 'me/never']);
-  assert.equal(repos[0].lastCommit.committedDate, '2026-09-25T00:00:00Z');
-  assert.equal(repos[1].lastMerged.number, 2);
-  assert.equal(repos[0].owner, 'org');
-  assert.deepEqual(repos[0].open.map((pr) => [pr.number, pr.ci]), [[5, 'failure']]);
+  assert.deepEqual(repos.map((repo) => repo.repo), ['me/fresh', 'org/stale', 'me/never']);
+  assert.equal(repos[1].lastCommit.committedDate, '2026-09-25T00:00:00Z');
+  assert.equal(repos[0].lastMerged.number, 2);
+  assert.equal(repos[1].owner, 'org');
+  assert.deepEqual(repos[1].open.map((pr) => [pr.number, pr.ci]), [[5, 'failure']]);
   assert.equal(repos[2].lastCommit, null);
 });
 
