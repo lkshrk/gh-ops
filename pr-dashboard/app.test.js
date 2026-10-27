@@ -21,6 +21,8 @@ function client({ hash = '', stored = null, storageThrows = false, request, poll
   const windowEvents = {};
   const store = new Map([['dashboardTab', stored]]);
   const calls = [];
+  const historyEntries = [hash];
+  let historyIndex = 0;
   const document = {
     activeElement: null,
     addEventListener: (name, handler) => { events[name] = handler; },
@@ -42,7 +44,26 @@ function client({ hash = '', stored = null, storageThrows = false, request, poll
     document, setInterval() {},
     addEventListener: (name, handler) => { windowEvents[name] = handler; },
     location: { hash, reload() { context.reloads++; } }, reloads: 0,
-    history: { pushState(_state, _unused, hash) { context.location.hash = hash; } },
+    history: {
+      pushState(_state, _unused, hash) {
+        historyEntries.splice(++historyIndex, Infinity, hash);
+        context.location.hash = hash;
+      },
+      replaceState(_state, _unused, hash) {
+        historyEntries[historyIndex] = hash;
+        context.location.hash = hash;
+      },
+      back() {
+        if (historyIndex === 0) return;
+        context.location.hash = historyEntries[--historyIndex];
+        windowEvents.hashchange();
+      },
+      forward() {
+        if (historyIndex === historyEntries.length - 1) return;
+        context.location.hash = historyEntries[++historyIndex];
+        windowEvents.hashchange();
+      },
+    },
     localStorage: {
       getItem(key) { if (storageThrows) throw Error('storage blocked'); return store.get(key) ?? null; },
       setItem(key, value) { if (storageThrows) throw Error('storage blocked'); store.set(key, value); },
@@ -251,4 +272,48 @@ test('history navigation moves focused tabs or hidden panel focus to the selecte
   ui.context.location.hash = '#workflows';
   ui.windowEvents.hashchange();
   assert.equal(ui.document.activeElement.id, 'tab-workflows');
+});
+
+test('Back and Forward restore a hashless initial storage-selected tab without an extra entry', () => {
+  const ui = client({ stored: 'renovate' });
+  assert.equal(ui.document.getElementById('renovate').hidden, false);
+  ui.events.click({ target: ui.document.getElementById('tab-subscriptions') });
+  assert.equal(ui.document.getElementById('subscriptions').hidden, false);
+  ui.context.history.back();
+  assert.equal(ui.document.getElementById('renovate').hidden, false);
+  assert.equal(ui.store.get('dashboardTab'), 'renovate');
+  ui.context.history.back();
+  assert.equal(ui.document.getElementById('renovate').hidden, false);
+  ui.context.history.forward();
+  assert.equal(ui.document.getElementById('subscriptions').hidden, false);
+  assert.equal(ui.store.get('dashboardTab'), 'subscriptions');
+});
+
+test('a delayed pre-unsubscribe poll cannot restore a removed row or overwrite the successful snapshot', async () => {
+  // Cover a response arriving late and a body still parsing when the mutation succeeds.
+  for (const delayBody of [false, true]) {
+    const fresh = fixture();
+    fresh.repoCount = 2;
+    const ui = client({ request: async () => ({ ok: true, json: async () => fresh }) });
+    const old = fixture();
+    old.subscriptions.items = [{ title: 'removed thread', url: 'https://github.com/up/repo/issues/1', subscribed: true }];
+    await ui.show(old);
+    let release;
+    const delayed = new Promise((resolve) => { release = resolve; });
+    ui.context.fetch = () => delayBody ? Promise.resolve({ ok: true, json: () => delayed }) : delayed;
+    const polling = ui.context.poll();
+    await Promise.resolve();
+    ui.context.fetch = async () => ({ ok: true, json: async () => fresh });
+    await ui.context.unsubscribe({ disabled: false, dataset: { url: old.subscriptions.items[0].url } });
+    assert.equal(ui.document.getElementById('count-subscriptions').textContent, 0);
+    release(delayBody ? old : { ok: true, json: async () => old });
+    await polling;
+    assert.equal(ui.document.getElementById('count-subscriptions').textContent, 0);
+    assert.doesNotMatch(ui.document.querySelector('#subscriptions .panel-body').innerHTML, /removed thread/);
+    assert.match(ui.document.getElementById('freshness').textContent, /^2 repos/);
+    // Subsequent polls must still update normally.
+    ui.context.fetch = async () => ({ ok: true, json: async () => ({ ...fresh, repoCount: 3 }) });
+    await ui.context.poll();
+    assert.match(ui.document.getElementById('freshness').textContent, /^3 repos/);
+  }
 });

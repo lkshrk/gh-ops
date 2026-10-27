@@ -13,6 +13,7 @@ const REASON_LABELS = {
 };
 
 let data = null;
+let mutationVersion = 0;
 const hiddenOwners = new Set(loadHiddenOwners());
 const TABS = ['contributions', 'subscriptions', 'workflows', 'renovate'];
 const pendingUnsubscribes = new Set();
@@ -45,6 +46,7 @@ function selectTab(value, navigate = false) {
     localStorage.setItem('dashboardTab', selected);
   } catch {}
   if (navigate && location.hash !== `#${selected}`) history.pushState(null, '', `#${selected}`);
+  return selected;
 }
 
 function loadHiddenOwners() {
@@ -428,7 +430,8 @@ function reauthenticate() {
   return true;
 }
 
-async function load(request) {
+async function load(request, mutation = false) {
+  const version = mutationVersion;
   const response = await request;
   // A manual redirect is reported as an opaque redirect instead of failing the fetch, which is the
   // only signal that the request reached the gateway but was sent to the login flow.
@@ -438,6 +441,9 @@ async function load(request) {
   }
   const body = await response.json();
   if (!response.ok) throw new Error(body.error || response.statusText);
+  // A successful mutation invalidates polls already fetching or parsing older snapshots.
+  if (mutation) mutationVersion++;
+  else if (version !== mutationVersion) return;
   data = body;
   render();
 }
@@ -452,6 +458,7 @@ async function setDone(button) {
         body: JSON.stringify({ url: button.dataset.url, done: button.dataset.done === 'true' }),
         redirect: 'manual',
       }),
+      true,
     );
   } catch (error) {
     button.disabled = false;
@@ -483,7 +490,7 @@ async function unsubscribe(button) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ url }),
       redirect: 'manual',
-    }));
+    }), true);
   } catch (error) {
     button.disabled = false;
     const banner = document.getElementById('banner');
@@ -533,6 +540,7 @@ document.addEventListener('keydown', (event) => {
   document.getElementById(`tab-${TABS[next]}`).focus();
 });
 addEventListener('hashchange', () => selectTab(location.hash.slice(1)));
-selectTab(initialTab());
+const initialSelection = selectTab(initialTab());
+if (!location.hash) history.replaceState(null, '', `#${initialSelection}`);
 poll();
 setInterval(poll, POLL_MS);
