@@ -13,7 +13,7 @@ Live, single-page dashboard over everything you maintain or contribute to on Git
 3. **Failing workflows**: default-branch GitHub Actions workflows across your own and your
    organizations' repositories whose latest `FAIL_STREAK` runs all failed, with a run strip and
    the date the streak started. Workflows with a shorter red streak sit in a collapsed list.
-4. **Renovate**: repositories ranked by their oldest last-merged Renovate pull request, with the
+4. **Renovate**: repositories ranked by their most recent Renovate commit on the default branch first, with the
    open Renovate pull requests and their CI state. Pending onboarding PRs and repositories
    without Renovate are listed separately.
 
@@ -45,7 +45,7 @@ Gateway handles OIDC with Authentik.
 |---|---|---|
 | `GITHUB_TOKENS` | — | Required. JSON object mapping each owner to a token, e.g. `{"my-user":"github_pat_…","my-org":"github_pat_…"}`. The owners listed here are the dashboard's own repositories. |
 | `NOTIFICATIONS_TOKEN` | — | Optional classic PAT for the dashboard user's notifications and Unsubscribe. Without it, Subscriptions shows an unavailable state; the other tabs continue working. |
-| `RENOVATE_BOT_LOGIN` | `renovate[bot]` | Author login of Renovate's issues (a self-hosted App is `<app-slug>[bot]`). |
+| `RENOVATE_BOT_LOGIN` | `renovate[bot]` | Author login of Renovate's commits and issues (a self-hosted App is `<app-slug>[bot]`). |
 | `PORT` | `3000` | HTTP listen port. |
 | `REFRESH_INTERVAL_MS` | `60000` | How often to poll GitHub. |
 | `FAIL_STREAK` | `3` | Consecutive failed runs that count as constantly failing. |
@@ -117,6 +117,20 @@ supplies this variable.
   repository can still produce notifications. A later subscription can be discovered again.
 
 ### Renovate health
+
+Repository ordering and the **last Renovate commit** link/age use `committedDate` from the
+default branch's **last 100 commits** (including its head), newest first. A commit qualifies
+when its GitHub-linked author matches `RENOVATE_BOT_LOGIN`, or one of its **first five associated
+pull requests** is merged, has `RENOVATE_BRANCH_PREFIX`, and targets this repository's current
+default branch. This also recognises human-authored merge/squash commits through their PR.
+Open PR heads, unrelated commits, issue activity and PR merge timestamps do not set this date.
+The link and age tooltip show the exact commit timestamp.
+
+This is a bounded history scan, not an all-time guarantee. A commit outside that window, an
+unlinked author with no qualifying PR association, more than five associations, or unavailable
+history can leave the date **unknown**. Repositories without a known commit sort last (ties
+sort by repository name). Existing open PR lists, dashboard health and seven-day merge KPIs
+continue using their existing sources; merge KPIs still use PR merge dates.
 
 Each repository's open issues by `RENOVATE_BOT_LOGIN` are read. The Dependency Dashboard is parsed
 for *Repository Problems*, `[!WARNING]`/`[!CAUTION]` notes, and the *Errored*, *PR Edited

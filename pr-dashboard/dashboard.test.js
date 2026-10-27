@@ -257,7 +257,7 @@ function renovatePr(number, extra = {}) {
   return { number, title: `Update dep ${number}`, url: `https://github.com/me/app/pull/${number}`, headRefName: `renovate/dep-${number}`, ...extra };
 }
 
-test('summarizeRenovate ranks repositories by oldest merged Renovate update', () => {
+test('summarizeRenovate ranks newest default-branch Renovate commit first, independently of merge dates', () => {
   const fresh = repoWithRuns([], {
     nameWithOwner: 'me/fresh',
     hasRenovateConfig: true,
@@ -284,12 +284,52 @@ test('summarizeRenovate ranks repositories by oldest merged Renovate update', ()
   });
   const never = repoWithRuns([], { nameWithOwner: 'me/never', hasRenovateConfig: true });
 
-  const { repos } = summarizeRenovate([fresh, stale, never]);
+  const commit = (committedDate, extra = {}) => ({
+    committedDate, url: `https://github.com/me/app/commit/${committedDate}`, messageHeadline: 'Update dependency',
+    author: { user: { login: 'renovate[bot]' } }, ...extra,
+  });
+  fresh.defaultBranchRef.target = { history: { nodes: [commit('2026-09-10T00:00:00Z')] } };
+  stale.renovateBot = 'custom-renovate[bot]';
+  stale.defaultBranchRef = { name: 'trunk', target: { history: { nodes: [
+    commit('2026-09-27T00:00:00Z', { author: { user: { login: 'human' } } }),
+    commit('2026-09-26T00:00:00Z'), // The public bot is not the configured bot here.
+    commit('2026-09-25T00:00:00Z', { author: { user: { login: 'custom-renovate[bot]' } } }),
+    commit('2026-09-24T00:00:00Z', { author: { user: { login: 'custom-renovate[bot]' } } }),
+  ] } } };
+  never.open.nodes = [renovatePr(6, { createdAt: '2026-09-30T00:00:00Z',
+    commits: { nodes: [{ commit: commit('2026-09-30T00:00:00Z') }] } })];
 
-  assert.deepEqual(repos.map((repo) => repo.repo), ['me/never', 'org/stale', 'me/fresh']);
-  assert.equal(repos[2].lastMerged.number, 2);
-  assert.equal(repos[1].owner, 'org');
-  assert.deepEqual(repos[1].open.map((pr) => [pr.number, pr.ci]), [[5, 'failure']]);
+  const { repos } = summarizeRenovate([never, fresh, stale]);
+
+  assert.deepEqual(repos.map((repo) => repo.repo), ['org/stale', 'me/fresh', 'me/never']);
+  assert.equal(repos[0].lastCommit.committedDate, '2026-09-25T00:00:00Z');
+  assert.equal(repos[1].lastMerged.number, 2);
+  assert.equal(repos[0].owner, 'org');
+  assert.deepEqual(repos[0].open.map((pr) => [pr.number, pr.ci]), [[5, 'failure']]);
+  assert.equal(repos[2].lastCommit, null);
+});
+
+test('summarizeRenovate uses only merged Renovate PRs targeting this default branch to identify human-authored commits', () => {
+  const pr = { state: 'MERGED', headRefName: 'deps/update', baseRefName: 'main', baseRepository: { nameWithOwner: 'me/app' } };
+  const commit = (day, associatedPr) => ({
+    committedDate: `2026-10-${day}T00:00:00Z`, url: `https://github.com/me/app/commit/${day}`, messageHeadline: `Commit ${day}`,
+    author: null, associatedPullRequests: { nodes: [null, associatedPr] },
+  });
+  const repo = repoWithRuns([], {
+    defaultBranchRef: { name: 'main', target: { history: { nodes: [
+      commit('27', { ...pr, baseRefName: 'release' }),
+      commit('26', { ...pr, baseRepository: { nameWithOwner: 'other/repo' } }),
+      commit('25', { ...pr, state: 'OPEN' }),
+      commit('24', { ...pr, headRefName: 'feature/unrelated' }),
+      commit('20', { ...pr, mergedAt: '2026-10-27T00:00:00Z' }),
+      commit('23', { ...pr, mergedAt: '2026-10-23T00:00:00Z' }),
+    ] } } },
+  });
+  const [entry] = summarizeRenovate([repo], { branchPrefix: 'deps/' }).repos;
+  assert.deepEqual(entry.lastCommit, {
+    committedDate: '2026-10-23T00:00:00Z', url: 'https://github.com/me/app/commit/23', title: 'Commit 23',
+  });
+  assert.equal(entry.hasConfig, false);
 });
 
 test('summarizeRenovate separates onboarding and repositories without Renovate', () => {
@@ -370,7 +410,7 @@ test('fetchOwnerRepos lists one owner\'s repositories, then fetches details in b
     detail,
   ]);
 
-  const repos = await createGitHubClient({ token: 't', fetchImpl }).fetchOwnerRepos('me');
+  const repos = await createGitHubClient({ token: 't', fetchImpl, renovateBot: 'custom[bot]' }).fetchOwnerRepos('me');
 
   assert.equal(calls.length, 3);
   assert.deepEqual(calls[0].variables, { owner: 'me', cursor: null });
@@ -379,6 +419,12 @@ test('fetchOwnerRepos lists one owner\'s repositories, then fetches details in b
   assert.equal(restCalls.length, 14);
   assert.ok(restCalls.includes('https://api.github.com/repos/me/repo0/actions/runs?exclude_pull_requests=true&branch=main&per_page=50'));
   assert.deepEqual(repos[0].actionRuns, { defaultBranch: [], recent: [] });
+  assert.equal(repos[0].renovateBot, 'custom[bot]');
+  assert.match(calls[1].query, /defaultBranchRef\s*\{\s*name\s+target\s*\{\s*\.\.\. on Commit\s*\{\s*history\(first: 100\)/);
+  assert.match(calls[1].query, /committedDate\s+url\s+messageHeadline/);
+  assert.match(calls[1].query, /author\s*\{\s*user\s*\{\s*login/);
+  assert.match(calls[1].query, /associatedPullRequests\(first: 5\)/);
+  assert.match(calls[1].query, /state\s+headRefName\s+baseRefName\s+baseRepository\s*\{\s*nameWithOwner/);
 });
 
 test('rest reuses the cached body when GitHub answers 304 Not Modified', async () => {
@@ -619,13 +665,15 @@ test('renovateHealth rates problems as error, blocked PRs as warn and a clean da
 test('summarizeRenovate keeps repositories whose only Renovate signal is a dashboard issue', () => {
   const repo = repoWithRuns([], {
     nameWithOwner: 'me/quiet',
-    renovateIssues: { nodes: [{ title: 'Renovate Dashboard', url: 'u', body: '## Repository Problems\n - ⚠️ WARN: x' }] },
+    renovateIssues: { nodes: [{ title: 'Renovate Dashboard', url: 'u', body: '## Repository Problems\n - ⚠️ WARN: x',
+      author: { login: 'renovate[bot]' }, updatedAt: '2026-10-27T00:00:00Z' }] },
   });
 
   const result = summarizeRenovate([repo]);
 
   assert.deepEqual(result.onboarding, []);
   assert.equal(result.repos[0].health.severity, 'error');
+  assert.equal(result.repos[0].lastCommit, null);
 });
 
 test('summarizeRenovate derives pull request CI from Actions runs when no rollup is readable', () => {

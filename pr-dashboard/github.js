@@ -47,7 +47,22 @@ const REPO_DETAIL_FIELDS = `
   isPrivate
   url
   ${renovateConfigFields}
-  defaultBranchRef { name }
+  defaultBranchRef {
+    name
+    target {
+      ... on Commit {
+        history(first: 100) {
+          nodes {
+            committedDate url messageHeadline
+            author { user { login } }
+            associatedPullRequests(first: 5) {
+              nodes { state headRefName baseRefName baseRepository { nameWithOwner } }
+            }
+          }
+        }
+      }
+    }
+  }
   renovateIssues: issues(first: 5, states: OPEN, filterBy: { createdBy: $renovateBot }) {
     nodes { title url body }
   }
@@ -431,6 +446,7 @@ function createGitHubClient({
     return Promise.all(
       repos.map(async (repo) => ({
         ...repo,
+        renovateBot,
         hasRenovateConfig: RENOVATE_CONFIG_FILES.some((_, index) => repo[`renovateConfig${index}`]),
         actionRuns: await fetchActionRuns(repo.nameWithOwner, repo.defaultBranchRef?.name),
       })),

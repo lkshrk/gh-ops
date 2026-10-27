@@ -278,6 +278,14 @@ function summarizeRenovate(repos, { branchPrefix = 'renovate/', now = new Date()
     const mergedAll = nodes(repo.merged);
     const merged = mergedAll.filter(isRenovate).sort((a, b) => b.mergedAt.localeCompare(a.mergedAt));
     const lastMerged = merged[0];
+    // shortcut: scan 100 default-branch commits and 5 PR associations each; paginate if deeper history is needed.
+    const lastCommit = nodes(repo.defaultBranchRef?.target?.history)
+      .filter((commit) => commit.author?.user?.login?.toLowerCase() === (repo.renovateBot || 'renovate[bot]').toLowerCase()
+        || nodes(commit.associatedPullRequests).some((pr) => pr.state === 'MERGED'
+          && pr.baseRefName === repo.defaultBranchRef.name
+          && pr.baseRepository?.nameWithOwner?.toLowerCase() === repo.nameWithOwner.toLowerCase()
+          && isRenovate(pr)))
+      .sort((a, b) => b.committedDate.localeCompare(a.committedDate))[0];
     const recentlyMerged = merged.filter((pr) => pr.mergedAt >= windowStart);
     const automerged = recentlyMerged.filter((pr) => pr.mergedBy?.__typename === 'Bot').length;
     if (mergedAll.length >= MERGED_FETCH_LIMIT && mergedAll.every((pr) => pr.mergedAt >= windowStart)) {
@@ -296,12 +304,12 @@ function summarizeRenovate(repos, { branchPrefix = 'renovate/', now = new Date()
 
     const health = renovateHealth(repo);
 
-    if (!repo.hasRenovateConfig && !lastMerged && open.length === 0 && !health) {
+    if (!repo.hasRenovateConfig && !lastMerged && !lastCommit && open.length === 0 && !health) {
       untracked.push(repoMeta(repo));
       continue;
     }
 
-    if (!repo.hasRenovateConfig && !lastMerged && openRenovate.length > 0 && openRenovate.every(isOnboarding)) {
+    if (!repo.hasRenovateConfig && !lastMerged && !lastCommit && openRenovate.length > 0 && openRenovate.every(isOnboarding)) {
       onboarding.push({ ...repoMeta(repo), pullRequest: open[0] });
       continue;
     }
@@ -309,6 +317,9 @@ function summarizeRenovate(repos, { branchPrefix = 'renovate/', now = new Date()
     tracked.push({
       ...repoMeta(repo),
       hasConfig: Boolean(repo.hasRenovateConfig),
+      lastCommit: lastCommit
+        ? { title: lastCommit.messageHeadline, url: lastCommit.url, committedDate: lastCommit.committedDate }
+        : null,
       lastMerged: lastMerged
         ? { number: lastMerged.number, title: lastMerged.title, url: lastMerged.url, mergedAt: lastMerged.mergedAt }
         : null,
@@ -318,7 +329,7 @@ function summarizeRenovate(repos, { branchPrefix = 'renovate/', now = new Date()
     });
   }
 
-  tracked.sort((a, b) => (a.lastMerged?.mergedAt || '').localeCompare(b.lastMerged?.mergedAt || ''));
+  tracked.sort((a, b) => (b.lastCommit?.committedDate || '').localeCompare(a.lastCommit?.committedDate || '') || a.repo.localeCompare(b.repo));
   return { branchPrefix, stats, repos: tracked, onboarding, untracked };
 }
 

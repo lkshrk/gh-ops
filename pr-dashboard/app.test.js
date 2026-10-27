@@ -94,6 +94,25 @@ test('contribution badges follow PR state regardless of review decision or comme
   }
 });
 
+test('Renovate rows label and link the last commit with its timestamp, and explain unknown history', async () => {
+  const ui = client();
+  await ui.show(fixture());
+  const { context } = ui;
+  const entry = { owner: 'me', name: 'app', hasConfig: true, open: [],
+    lastMerged: { title: 'Wrong merge date', url: 'https://github.com/me/app/pull/1', mergedAt: new Date().toISOString() },
+    lastCommit: { title: 'Update <dep>', url: 'https://github.com/me/app/commit/abc', committedDate: '2026-10-01T00:00:00Z' } };
+  const html = context.renovateRow(entry);
+  assert.match(html, /last Renovate commit/);
+  assert.match(html, /href="https:\/\/github.com\/me\/app\/commit\/abc"/);
+  assert.match(html, /title="Last Renovate commit: 2026-10-01T00:00:00Z"/);
+  assert.match(html, /Update &#60;dep&#62;/);
+  assert.doesNotMatch(html, /Wrong merge date/);
+  const unknown = context.renovateRow({ ...entry, lastCommit: null });
+  assert.match(unknown, /unknown/);
+  assert.match(unknown, /no known Renovate commit in the last 100 default-branch commits/);
+  assert.doesNotMatch(unknown, /never|Wrong merge date/);
+});
+
 test('an expired session reloads once, then waits instead of looping', async () => {
   const { context } = client({ pollResponse: { type: 'opaqueredirect', ok: false, status: 0 } });
 

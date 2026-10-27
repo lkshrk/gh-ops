@@ -277,10 +277,11 @@ function healthRows(health) {
 }
 
 function renovateRow(entry) {
-  const tone = freshness(entry.lastMerged?.mergedAt);
-  const last = entry.lastMerged
-    ? `<span class="last">last <a href="${esc(entry.lastMerged.url)}">${esc(entry.lastMerged.title)}</a></span>`
-    : '<span class="last none">no merged update in the last 50 pull requests</span>';
+  const tone = freshness(entry.lastCommit?.committedDate);
+  const commitTitle = entry.lastCommit ? `Last Renovate commit: ${entry.lastCommit.committedDate}` : 'Last Renovate commit unknown; history may be limited or unavailable';
+  const last = entry.lastCommit
+    ? `<span class="last">last Renovate commit <a href="${esc(entry.lastCommit.url)}" title="${esc(commitTitle)}">${esc(entry.lastCommit.title)}</a></span>`
+    : '<span class="last none">no known Renovate commit in the last 100 default-branch commits</span>';
   const count = (ci) => entry.open.filter((pr) => pr.ci === ci).length;
   const green = count('success');
   const red = count('failure');
@@ -290,7 +291,7 @@ function renovateRow(entry) {
     ? `<span class="${green ? 'n-good' : 'n-zero'}">${green}</span><span class="n-sep">/</span><span class="${red ? 'n-bad' : 'n-zero'}">${red}</span>${other ? `<span class="n-sep">/</span><span class="n-other">${other}</span>` : ''}`
     : '<span class="n-zero">0</span>';
   const head = `
-    <span class="age-badge ${tone}">${entry.lastMerged ? ago(entry.lastMerged.mergedAt) : 'never'}</span>
+    <span class="age-badge ${tone}" title="${esc(commitTitle)}">${entry.lastCommit ? ago(entry.lastCommit.committedDate) : 'unknown'}</span>
     <div class="row-main">
       ${ownRepo(entry, 'repo repo-title')}
       <div class="meta">${last}${healthChips(entry.health)}${entry.hasConfig ? '' : chip('No config on default branch', 'muted')}</div>
