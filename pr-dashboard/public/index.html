@@ -21,45 +21,47 @@
   <div id="banner" class="banner" role="alert" hidden></div>
 
   <main>
-    <nav class="tabs" role="tablist" aria-label="Dashboard sections">
-      <button type="button" id="tab-contributions" role="tab" data-tab="contributions" aria-controls="contributions" aria-selected="true">Contributions <span id="count-contributions" class="count">0</span></button>
-      <button type="button" id="tab-subscriptions" role="tab" data-tab="subscriptions" aria-controls="subscriptions" aria-selected="false" tabindex="-1">Subscriptions <span id="count-subscriptions" class="count">0</span></button>
-      <button type="button" id="tab-workflows" role="tab" data-tab="workflows" aria-controls="workflows" aria-selected="false" tabindex="-1">Failing workflows <span id="count-workflows" class="count">0</span></button>
-      <button type="button" id="tab-renovate" role="tab" data-tab="renovate" aria-controls="renovate" aria-selected="false" tabindex="-1">Renovate <span id="count-renovate" class="count">0</span></button>
-    </nav>
-    <nav id="owners" class="owners" aria-label="Filter own repositories by owner" hidden></nav>
+    <div class="dashboard-panel">
+      <nav class="tabs" role="tablist" aria-label="Dashboard sections">
+        <button type="button" id="tab-contributions" role="tab" data-tab="contributions" aria-controls="contributions" aria-selected="true">Contributions <span id="count-contributions" class="count">0</span></button>
+        <button type="button" id="tab-subscriptions" role="tab" data-tab="subscriptions" aria-controls="subscriptions" aria-selected="false" tabindex="-1">Subscriptions <span id="count-subscriptions" class="count">0</span></button>
+        <button type="button" id="tab-workflows" role="tab" data-tab="workflows" aria-controls="workflows" aria-selected="false" tabindex="-1">Failing workflows <span id="count-workflows" class="count">0</span></button>
+        <button type="button" id="tab-renovate" role="tab" data-tab="renovate" aria-controls="renovate" aria-selected="false" tabindex="-1">Renovate <span id="count-renovate" class="count">0</span></button>
+      </nav>
+      <nav id="owners" class="owners" aria-label="Filter own repositories by owner" hidden></nav>
 
-    <section id="contributions" class="panel" role="tabpanel" aria-labelledby="tab-contributions" tabindex="0">
-      <header class="panel-head">
-        <h2>Contributions</h2>
-        <p class="hint">Your pull requests to other projects</p>
-      </header>
-      <div class="panel-body"></div>
-    </section>
+      <section id="contributions" class="panel" role="tabpanel" aria-labelledby="tab-contributions" tabindex="0">
+        <header class="panel-head">
+          <h2>Contributions</h2>
+          <p class="hint">Your pull requests to other projects</p>
+        </header>
+        <div class="panel-body"></div>
+      </section>
 
-    <section id="subscriptions" class="panel" role="tabpanel" aria-labelledby="tab-subscriptions" tabindex="0" hidden>
-      <header class="panel-head">
-        <h2>Subscriptions</h2>
-        <p class="hint">Manually subscribed threads in other owners’ repositories · closures older than seven days hidden</p>
-      </header>
-      <div class="panel-body"></div>
-    </section>
+      <section id="subscriptions" class="panel" role="tabpanel" aria-labelledby="tab-subscriptions" tabindex="0" hidden>
+        <header class="panel-head">
+          <h2>Subscriptions</h2>
+          <p class="hint">Manually subscribed threads in other owners’ repositories · closures older than seven days hidden</p>
+        </header>
+        <div class="panel-body"></div>
+      </section>
 
-    <section id="workflows" class="panel" role="tabpanel" aria-labelledby="tab-workflows" tabindex="0" hidden>
-      <header class="panel-head">
-        <h2>Failing workflows</h2>
-        <p class="hint" id="workflows-hint">Default branch, own repositories</p>
-      </header>
-      <div class="panel-body"></div>
-    </section>
+      <section id="workflows" class="panel" role="tabpanel" aria-labelledby="tab-workflows" tabindex="0" hidden>
+        <header class="panel-head">
+          <h2>Failing workflows</h2>
+          <p class="hint" id="workflows-hint">Default branch, own repositories</p>
+        </header>
+        <div class="panel-body"></div>
+      </section>
 
-    <section id="renovate" class="panel" role="tabpanel" aria-labelledby="tab-renovate" tabindex="0" hidden>
-      <header class="panel-head">
-        <h2>Renovate</h2>
-        <p class="hint">Most outdated first</p>
-      </header>
-      <div class="panel-body"></div>
-    </section>
+      <section id="renovate" class="panel" role="tabpanel" aria-labelledby="tab-renovate" tabindex="0" hidden>
+        <header class="panel-head">
+          <h2>Renovate</h2>
+          <p class="hint">Most outdated first</p>
+        </header>
+        <div class="panel-body"></div>
+      </section>
+    </div>
   </main>
 </body>
 </html>
