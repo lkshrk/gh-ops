@@ -15,7 +15,6 @@ const REASON_LABELS = {
 let data = null;
 let mutationVersion = 0;
 let mutationQueue = Promise.resolve();
-const hiddenOwners = new Set(loadHiddenOwners());
 const TABS = ['contributions', 'subscriptions', 'workflows', 'renovate'];
 const pendingUnsubscribes = new Set();
 
@@ -40,28 +39,11 @@ function selectTab(value, navigate = false) {
     tab.setAttribute('aria-selected', String(active));
     tab.tabIndex = active ? 0 : -1;
   }
-  const owners = document.getElementById('owners');
-  owners.hidden = selected !== 'workflows' && selected !== 'renovate';
-  if (owners.hidden && owners.contains(document.activeElement)) document.getElementById(`tab-${selected}`).focus();
   try {
     localStorage.setItem('dashboardTab', selected);
   } catch {}
   if (navigate && location.hash !== `#${selected}`) history.pushState(null, '', `#${selected}`);
   return selected;
-}
-
-function loadHiddenOwners() {
-  try {
-    return JSON.parse(localStorage.getItem('hiddenOwners') || '[]');
-  } catch {
-    return [];
-  }
-}
-
-function saveHiddenOwners() {
-  try {
-    localStorage.setItem('hiddenOwners', JSON.stringify([...hiddenOwners]));
-  } catch {}
 }
 
 function esc(value) {
@@ -216,13 +198,8 @@ function workflowRow(entry) {
   </li>`;
 }
 
-function visible(entries) {
-  return entries.filter((entry) => !hiddenOwners.has(entry.owner));
-}
-
 function renderWorkflows() {
-  const failing = visible(data.workflows.failing);
-  const recent = visible(data.workflows.recent);
+  const { failing, recent } = data.workflows;
   const recentBlock = recent.length
     ? `<details class="more" open><summary>Recently failed, not yet ${data.workflows.failStreak}× in a row <span class="count">${recent.length}</span></summary>
         <ul class="rows">${recent.map(workflowRow).join('')}</ul></details>`
@@ -319,9 +296,7 @@ function renovateRow(entry) {
 }
 
 function renderRenovate() {
-  const repos = visible(data.renovate.repos);
-  const untracked = visible(data.renovate.untracked);
-  const onboarding = visible(data.renovate.onboarding);
+  const { repos, untracked, onboarding } = data.renovate;
   const onboardingBlock = onboarding.length
     ? `<details class="more"><summary>Onboarding PR not merged <span class="count">${onboarding.length}</span></summary>
         <ul class="rows">${onboarding
@@ -341,10 +316,10 @@ function renderKpis() {
   const { attention, open } = data.contributions;
   const red = attention.filter((pr) => pr.ci === 'failure').length;
   const review = attention.filter((pr) => pr.reasons.some((reason) => reason !== 'ci-failing')).length;
-  const failing = visible(data.workflows.failing).length;
-  const recent = visible(data.workflows.recent).length;
+  const failing = data.workflows.failing.length;
+  const recent = data.workflows.recent.length;
 
-  const repos = visible(data.renovate.repos);
+  const repos = data.renovate.repos;
   const sum = (pick) => repos.reduce((total, entry) => total + pick(entry), 0);
   const automerged = sum((entry) => entry.recentlyMerged.automerged);
   const manual = sum((entry) => entry.recentlyMerged.manual);
@@ -376,20 +351,9 @@ function renderKpis() {
     </div>`;
 }
 
-function renderOwners() {
-  const chips = data.owners
-    .map((owner) => {
-      const active = !hiddenOwners.has(owner);
-      return `<button type="button" class="owner-filter ${ownerClass(owner)}" data-owner="${esc(owner)}" aria-pressed="${active}">${esc(owner)}</button>`;
-    })
-    .join('');
-  return `<span class="owners-label">Own repositories</span>${chips}`;
-}
-
 function render() {
   if (!data) return;
   document.getElementById('kpis').innerHTML = renderKpis();
-  document.getElementById('owners').innerHTML = renderOwners();
   document.querySelector('#contributions .panel-body').innerHTML = renderContributions();
   document.querySelector('#subscriptions .panel-body').innerHTML = renderSubscriptions();
   document.querySelector('#workflows .panel-body').innerHTML = renderWorkflows();
@@ -397,8 +361,8 @@ function render() {
   const counts = {
     contributions: Object.values(data.contributions).reduce((total, items) => total + items.length, 0),
     subscriptions: data.subscriptions?.items.length ?? 0,
-    workflows: visible(data.workflows.failing).length + visible(data.workflows.recent).length,
-    renovate: visible(data.renovate.repos).length + visible(data.renovate.onboarding).length + visible(data.renovate.untracked).length,
+    workflows: data.workflows.failing.length + data.workflows.recent.length,
+    renovate: data.renovate.repos.length + data.renovate.onboarding.length + data.renovate.untracked.length,
   };
   for (const id of TABS) document.getElementById(`count-${id}`).textContent = counts[id];
   document.getElementById('freshness').textContent = `${data.repoCount} repos · updated ${ago(data.generatedAt)} ago`;
@@ -521,13 +485,6 @@ document.addEventListener('click', (event) => {
     setDone(toggle);
     return;
   }
-  const button = event.target.closest('.owner-filter');
-  if (!button) return;
-  const { owner } = button.dataset;
-  if (hiddenOwners.has(owner)) hiddenOwners.delete(owner);
-  else hiddenOwners.add(owner);
-  saveHiddenOwners();
-  render();
 });
 
 document.addEventListener('keydown', (event) => {

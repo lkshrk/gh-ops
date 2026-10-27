@@ -15,11 +15,11 @@ function fixture() {
 }
 
 // Only browser boundaries are doubled; all navigation/render/mutation code runs unchanged.
-function client({ hash = '', stored = null, storageThrows = false, request, pollResponse } = {}) {
+function client({ hash = '', stored = null, hiddenOwners = [], storageThrows = false, request, pollResponse } = {}) {
   const elements = new Map();
   const events = {};
   const windowEvents = {};
-  const store = new Map([['dashboardTab', stored]]);
+  const store = new Map([['dashboardTab', stored], ['hiddenOwners', JSON.stringify(hiddenOwners)]]);
   const calls = [];
   const historyEntries = [hash];
   let historyIndex = 0;
@@ -172,9 +172,7 @@ test('keyboard navigation wraps, focuses tabs, persists and handles browser hist
   assert.equal(ui.context.location.hash, '#renovate');
   assert.equal(ui.store.get('dashboardTab'), 'renovate');
   assert.equal(ui.document.activeElement.id, 'tab-renovate');
-  assert.equal(ui.document.getElementById('owners').hidden, false);
   key('renovate', 'ArrowRight');
-  assert.equal(ui.document.getElementById('owners').hidden, true);
   key('contributions', 'End');
   key('renovate', 'Home');
   for (const hash of ['#subscriptions', '#workflows', '#invalid']) {
@@ -187,25 +185,44 @@ test('keyboard navigation wraps, focuses tabs, persists and handles browser hist
   assert.equal(ui.document.getElementById('contributions').hidden, false);
 });
 
-test('counts reflect visible rows, owner filtering only affects own repositories, and polls keep selection', async () => {
-  const ui = client({ hash: '#subscriptions' });
+test('old hidden owners cannot hide workflows, Renovate rows or counts, and polls keep selection', async () => {
+  const ui = client({ hash: '#subscriptions', hiddenOwners: ['me', 'org'] });
   const snapshot = fixture();
+  snapshot.owners = ['me', 'org'];
   snapshot.subscriptions.items = [{ title: 'subscription', subscribed: true, unread: true }];
   snapshot.subscriptions.unread = 1;
   snapshot.contributions.closed = [{ title: 'closed', state: 'CLOSED', reasons: [] }];
-  snapshot.renovate.untracked = [{ owner: 'me', name: 'repo' }];
-  await ui.show(snapshot);
-  assert.equal(ui.document.getElementById('count-contributions').textContent, 1);
-  assert.equal(ui.document.getElementById('count-subscriptions').textContent, 1);
-  assert.equal(ui.document.getElementById('count-renovate').textContent, 1);
-  assert.equal((ui.document.getElementById('kpis').innerHTML.match(/class="kpi /g) || []).length, 4);
-  const owner = { dataset: { owner: 'me' }, closest: (selector) => selector === '.owner-filter' ? owner : null };
-  ui.events.click({ target: owner });
-  assert.equal(ui.document.getElementById('count-renovate').textContent, 0);
-  assert.equal(ui.document.getElementById('count-contributions').textContent, 1);
-  assert.equal(ui.document.getElementById('count-subscriptions').textContent, 1);
-  await ui.show(snapshot);
-  assert.equal(ui.document.getElementById('subscriptions').hidden, false);
+  for (const owner of snapshot.owners) {
+    const repo = { owner, name: `${owner}-repo`, repo: `${owner}/${owner}-repo` };
+    const workflow = { ...repo, workflow: `${owner}-CI`, latestRun: {}, runs: [], streak: 3 };
+    snapshot.workflows.failing.push(workflow);
+    snapshot.workflows.recent.push({ ...workflow, workflow: `${owner}-recent` });
+    snapshot.renovate.repos.push({ ...repo, open: [], recentlyMerged: { automerged: 1, manual: 0 } });
+    snapshot.renovate.untracked.push({ ...repo, name: `${owner}-untracked` });
+    snapshot.renovate.onboarding.push({ ...repo, pullRequest: { title: `${owner}-onboarding` } });
+  }
+  for (let refresh = 0; refresh < 2; refresh++) {
+    await ui.show(snapshot);
+    for (const [tab, count] of Object.entries({ contributions: 1, subscriptions: 1, workflows: 4, renovate: 6 })) {
+      assert.equal(ui.document.getElementById(`count-${tab}`).textContent, count);
+    }
+    const workflows = ui.document.querySelector('#workflows .panel-body').innerHTML;
+    const renovate = ui.document.querySelector('#renovate .panel-body').innerHTML;
+    for (const owner of snapshot.owners) {
+      for (const suffix of ['CI', 'recent']) assert.ok(workflows.includes(`${owner}-${suffix}`));
+      for (const suffix of ['repo', 'untracked', 'onboarding']) assert.ok(renovate.includes(`${owner}-${suffix}`));
+    }
+    for (const html of [workflows, renovate]) {
+      assert.match(html, /owner-dot o0/);
+      assert.match(html, /owner-dot o1/);
+    }
+    const kpis = ui.document.getElementById('kpis').innerHTML;
+    assert.equal((kpis.match(/class="kpi /g) || []).length, 4);
+    assert.match(kpis, /class="bad">2<\/span>/);
+    assert.match(kpis, /2 more failed recently/);
+    assert.match(kpis, /class="good">2<\/span>/);
+    assert.equal(ui.document.getElementById('subscriptions').hidden, false);
+  }
 });
 
 test('subscriptions escape text and show type/state/unread, warnings and unavailable states', async () => {

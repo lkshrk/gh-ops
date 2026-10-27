@@ -20,8 +20,8 @@ Live, single-page dashboard over everything you maintain or contribute to on Git
 These are four tabs, linked by `#contributions`, `#subscriptions`, `#workflows` and `#renovate`.
 The URL hash takes precedence over the last tab remembered in browser storage; unknown tabs
 fall back to Contributions. Browser back/forward and keyboard tab navigation are supported.
-Repositories are color-coded by owner; owner chips appear only on Failing workflows and
-Renovate and filter those views. The owner selection is remembered per browser.
+The tab strip and active content share one bordered panel. Repositories are color-coded by
+owner; Failing workflows and Renovate always include all configured owners.
 
 ## How it works
 
