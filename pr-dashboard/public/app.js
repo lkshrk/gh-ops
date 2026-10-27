@@ -14,6 +14,38 @@ const REASON_LABELS = {
 
 let data = null;
 const hiddenOwners = new Set(loadHiddenOwners());
+const TABS = ['contributions', 'subscriptions', 'workflows', 'renovate'];
+const pendingUnsubscribes = new Set();
+
+function initialTab() {
+  if (location.hash) return location.hash.slice(1);
+  try {
+    return localStorage.getItem('dashboardTab');
+  } catch {
+    return null;
+  }
+}
+
+function selectTab(value, navigate = false) {
+  const selected = TABS.includes(value) ? value : 'contributions';
+  if (document.activeElement?.closest('[role="tab"]')) document.getElementById(`tab-${selected}`).focus();
+  for (const id of TABS) {
+    const panel = document.getElementById(id);
+    const tab = document.getElementById(`tab-${id}`);
+    const active = id === selected;
+    if (!active && panel.contains(document.activeElement)) document.getElementById(`tab-${selected}`).focus();
+    panel.hidden = !active;
+    tab.setAttribute('aria-selected', String(active));
+    tab.tabIndex = active ? 0 : -1;
+  }
+  const owners = document.getElementById('owners');
+  owners.hidden = selected !== 'workflows' && selected !== 'renovate';
+  if (owners.hidden && owners.contains(document.activeElement)) document.getElementById(`tab-${selected}`).focus();
+  try {
+    localStorage.setItem('dashboardTab', selected);
+  } catch {}
+  if (navigate && location.hash !== `#${selected}`) history.pushState(null, '', `#${selected}`);
+}
 
 function loadHiddenOwners() {
   try {
@@ -122,6 +154,36 @@ function renderContributions() {
     group('Needs you', attention, contributionRow, 'Nothing waiting on you.', 'attention'),
     group('Open, waiting on others', open, contributionRow, 'No open contributions.'),
     group('Recently closed', closed, contributionRow, 'Nothing closed recently.'),
+  ].join('');
+}
+
+function subscriptionRow(item) {
+  const type = { Issue: 'Issue', PullRequest: 'Pull request', Discussion: 'Discussion' }[item.type] || item.type || 'Unknown type';
+  const state = { OPEN: 'Open', CLOSED: 'Closed', MERGED: 'Merged' }[item.state] || 'Unknown state';
+  return `<li class="row">
+    <div class="row-main">
+      <a class="title" href="${esc(item.url)}">${esc(item.title)}</a>
+      <div class="meta"><span class="upstream">${esc(item.repo)}</span><span class="num">#${esc(item.number)}</span>
+        ${chip(type, 'muted')}${chip(state, item.state === 'MERGED' ? 'merged' : item.state === 'OPEN' ? 'good' : 'muted')}
+        ${item.unread ? chip('Unread', 'warn') : ''}${item.subscribed == null ? chip('Unknown subscription', 'warn') : ''}
+      </div>
+    </div>
+    ${data.subscriptions.canUnsubscribe && item.subscribed === true ? `<button type="button" class="unsubscribe" data-url="${esc(item.url)}" aria-label="Unsubscribe from ${esc(item.title)}"${pendingUnsubscribes.has(item.url) ? ' disabled' : ''}>Unsubscribe</button>` : ''}
+    <span class="age">${when(item.updatedAt)}</span>
+  </li>`;
+}
+
+function renderSubscriptions() {
+  const subscriptions = data.subscriptions;
+  if (!subscriptions) return emptyState('Subscriptions unavailable.');
+  const { items, error, warnings, truncated, hidden, canUnsubscribe } = subscriptions;
+  return [
+    !canUnsubscribe ? emptyState('Subscriptions unavailable: notifications access is not configured.') : '',
+    error ? `<p class="subscription-notice" role="status">${esc(error)}${items.length ? ' · Showing previously fetched subscriptions.' : ''}</p>` : '',
+    ...(warnings || []).map((warning) => `<p class="subscription-notice">${esc(warning)}</p>`),
+    truncated ? '<p class="subscription-notice">Results truncated: only part of your subscriptions could be fetched.</p>' : '',
+    hidden ? emptyState(`${hidden} closed or merged threads older than seven days hidden.`) : '',
+    items.length ? `<ul class="rows">${items.map(subscriptionRow).join('')}</ul>` : canUnsubscribe && !error ? emptyState('No manual subscriptions to show.') : '',
   ].join('');
 }
 
@@ -293,6 +355,11 @@ function renderKpis() {
       <span class="kpi-value"><span class="${attention.length ? 'bad' : 'good'}">${attention.length}</span><span class="of">/</span><span class="total">${attention.length + open.length}</span></span>
       <span class="kpi-sub">need you / open · ${red} red CI · ${review} to answer</span>
     </div>
+    <div class="kpi ${data.subscriptions?.error || !data.subscriptions?.canUnsubscribe ? 'warn' : 'calm'}">
+      <span class="kpi-label">Subscriptions</span>
+      <span class="kpi-value">${data.subscriptions?.items.length ?? 0}</span>
+      <span class="kpi-sub">${data.subscriptions?.unread ?? 0} unread · ${data.subscriptions?.canUnsubscribe ? 'manual subscriptions' : 'unavailable'}</span>
+    </div>
     <div class="kpi ${failing ? 'alert' : 'calm'}">
       <span class="kpi-label">Failing workflows</span>
       <span class="kpi-value"><span class="${failing ? 'bad' : 'good'}">${failing}</span></span>
@@ -320,8 +387,16 @@ function render() {
   document.getElementById('kpis').innerHTML = renderKpis();
   document.getElementById('owners').innerHTML = renderOwners();
   document.querySelector('#contributions .panel-body').innerHTML = renderContributions();
+  document.querySelector('#subscriptions .panel-body').innerHTML = renderSubscriptions();
   document.querySelector('#workflows .panel-body').innerHTML = renderWorkflows();
   document.querySelector('#renovate .panel-body').innerHTML = renderRenovate();
+  const counts = {
+    contributions: Object.values(data.contributions).reduce((total, items) => total + items.length, 0),
+    subscriptions: data.subscriptions?.items.length ?? 0,
+    workflows: visible(data.workflows.failing).length + visible(data.workflows.recent).length,
+    renovate: visible(data.renovate.repos).length + visible(data.renovate.onboarding).length + visible(data.renovate.untracked).length,
+  };
+  for (const id of TABS) document.getElementById(`count-${id}`).textContent = counts[id];
   document.getElementById('freshness').textContent = `${data.repoCount} repos · updated ${ago(data.generatedAt)} ago`;
 
   const banner = document.getElementById('banner');
@@ -397,7 +472,42 @@ async function poll() {
   }
 }
 
+async function unsubscribe(button) {
+  const { url } = button.dataset;
+  if (button.disabled || pendingUnsubscribes.has(url)) return;
+  pendingUnsubscribes.add(url);
+  button.disabled = true;
+  try {
+    await load(fetch('subscriptions/unsubscribe', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
+      redirect: 'manual',
+    }));
+  } catch (error) {
+    button.disabled = false;
+    const banner = document.getElementById('banner');
+    banner.hidden = false;
+    banner.textContent = `Could not unsubscribe: ${error.message}`;
+  } finally {
+    pendingUnsubscribes.delete(url);
+    for (const control of document.querySelectorAll('.unsubscribe')) {
+      control.disabled = pendingUnsubscribes.has(control.dataset.url);
+    }
+  }
+}
+
 document.addEventListener('click', (event) => {
+  const tab = event.target.closest('[role="tab"]');
+  if (tab) {
+    selectTab(tab.dataset.tab, true);
+    return;
+  }
+  const subscription = event.target.closest('.unsubscribe');
+  if (subscription) {
+    unsubscribe(subscription);
+    return;
+  }
   const toggle = event.target.closest('.done-toggle');
   if (toggle) {
     setDone(toggle);
@@ -412,5 +522,17 @@ document.addEventListener('click', (event) => {
   render();
 });
 
+document.addEventListener('keydown', (event) => {
+  const tab = event.target.closest('[role="tab"]');
+  if (!tab) return;
+  const index = TABS.indexOf(tab.dataset.tab);
+  const next = { ArrowRight: (index + 1) % TABS.length, ArrowLeft: (index + TABS.length - 1) % TABS.length, Home: 0, End: TABS.length - 1 }[event.key];
+  if (next === undefined) return;
+  event.preventDefault();
+  selectTab(TABS[next], true);
+  document.getElementById(`tab-${TABS[next]}`).focus();
+});
+addEventListener('hashchange', () => selectTab(location.hash.slice(1)));
+selectTab(initialTab());
 poll();
 setInterval(poll, POLL_MS);
