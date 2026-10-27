@@ -49,8 +49,9 @@ Three consequences:
    returns `subscribed: true/false`, and **404 once unsubscribed** (observed). That is the only
    authoritative source.
 
-Also learned: notification history is ~2 months deep (oldest thread 2026-08-28), so the tab can never
-show a subscription older than that.
+The sampled inbox's oldest notification activity was 2026-08-28. This does not establish a
+subscription creation-age limit: an older subscription with recent activity can appear. Discovery
+is limited to threads returned by the notifications API, not an exhaustive subscription inventory.
 
 ## Approaches considered
 
@@ -75,13 +76,15 @@ show a subscription older than that.
    does not touch the inbox (no "done" call). The row disappears on the next refresh because the
    subscription check reports it gone — GitHub is the source of truth, so no suppression list, no extra
    state file, and unsubscribing on github.com is reflected too. Same `notifications` scope, no new
-   token permission.
+   token permission. GitHub documents that comments or @mentions may trigger future notifications,
+   and repository watching can still notify; DELETE is not a permanent ignore/mute operation.
 3. **Subscription truth per item.** For each candidate, `GET /notifications/threads/{id}/subscription`
-   (404 = gone). One conditional request per item, ETag-cached, capped at `SUBSCRIPTION_LIMIT = 30`
+   (404 = gone). One request per item, conditional only when GitHub supplies a validator, capped at `SUBSCRIPTION_LIMIT = 30`
    items per refresh so the shared REST budget (5000/h, also used by Actions runs) cannot drift; beyond
    the cap, oldest-by-update items are dropped from the tab and the panel says so.
-4. **State drives the tab, not just decorates it.** One batched GraphQL lookup per refresh gives
-   `state` and `closedAt` for every subscribed thread (issues and discussions: OPEN/CLOSED; pull
+4. **State drives the tab, not just decorates it.** Bounded GraphQL batches through the existing
+   viewer client give `state` and `closedAt` for every visible subject (Discussion uses `closed`
+   and `closedAt`, mapped to OPEN/CLOSED; pull
    requests: OPEN/CLOSED/MERGED). A thread closed **more than 7 days** ago is hidden
    (`CLOSED_GRACE_DAYS = 7`, strictly older than the snapshot time; a merge counts as closed). The
    last week of closed threads stays visible so a wrap-up is still noticeable.
@@ -97,30 +100,36 @@ show a subscription older than that.
    mirror the tabs. 4 → 2 → 1 columns responsive.
 10. **Owner chips stay one element**, moved under the tab bar, shown only for the two tabs they
     filter (Failing workflows, Renovate).
-11. **`NOTIFICATIONS_TOKEN`** (classic PAT, `notifications` scope) is optional and separate from
-    `GITHUB_TOKENS`: it is the only credential that can read or change notifications. Absent or
+11. **`NOTIFICATIONS_TOKEN`** (recommended: classic PAT, `notifications` scope) is optional and separate from
+     `GITHUB_TOKENS`: this client handles notification reads and subscription changes; the existing
+     viewer client enriches subjects because a notifications-only credential need not access GraphQL. Absent or
     failing, the tab renders "notifications token not configured" / the error and offers no
     Unsubscribe button, and the rest of the snapshot is unaffected.
 
 ## Constraints
 
-- `/notifications` accepts **classic PATs only**; fine-grained tokens get 403. Hence the separate,
-  optional token and the graceful-empty state.
-- Poll cost: 8 conditional page requests per refresh (ETag per page, 304s do not count against the
-  rate limit), plus one subscription check per displayed item and one batched state query. Existing
-  60 s refresh cycle is unchanged.
+- The notifications endpoint documentation recommends classic PATs with `notifications` or `repo`
+  scope and excludes fine-grained tokens. OAuth's documented `notifications` scope also grants
+  notification and thread-subscription access, consistent with the CLI probe; do not reject a token
+  by its prefix or claim classic PATs are the only possible credentials.
+- Poll cost is bounded by 10 notification pages, 30 candidate subscription checks, and GraphQL
+  batches of six subjects through the viewer client. Notifications use `Last-Modified` /
+  `If-Modified-Since`, cache body and pagination links on 304, and respect `X-Poll-Interval`.
+  ETags are used only when actually returned; their availability is not guaranteed. The dashboard's
+  refresh cycle does not override GitHub's polling interval.
 - No auth in the app. Same-origin POST only, as today. Unsubscribe inherits the existing guard, but it
   is a real mutation of the user's GitHub account, so the button appears only when the token exists.
-- Notification retention is ~2 months: anything older is invisible to the tab by construction.
+- Notification activity age is not subscription age. Historical discovery remains incomplete.
 
 ## Parts (what gets touched)
 
-- `github.js` — `fetchSubscriptions({ excludeOwners })`: page `?all=true&participating=true&per_page=100`
+- `github.js` — `fetchSubscriptions({ excludeOwners, stateClient })`: page `?all=true&per_page=100`
   (cap 10 pages), keep `reason === 'manual'`, drop own-owner repos, dedupe by subject URL, cap at
-  `SUBSCRIPTION_LIMIT`; `subscriptionState(threadId)` (`GET .../subscription`, 404 = gone, returns
-  `subscribed: true/false`); the batched state lookup (`issue`/`pullRequest`/`discussion` by number);
-  `unsubscribe(threadId)` (`DELETE .../subscription`, throws on non-204).
-- `dashboard.js` — `summarizeSubscriptions(threads, { now, state })` → `{ items, unread, hidden }`;
+  `SUBSCRIPTION_LIMIT`; internal subscription checks (`GET .../subscription`, 404 = gone, returns
+  `subscribed: true/false`, unknown on lookup failure); viewer-client batched state lookup
+  (`issue`/`pullRequest`/`discussion` by number); follow validated Link pagination even on short pages.
+  `unsubscribe(threadId)` (`DELETE .../subscription`, accepts empty 204 and throws on failure).
+- `dashboard.js` — `summarizeSubscriptions(threads, { now })` → `{ items, unread, hidden }`;
   pure, so filtering (own repos, unsubscribed, closed > 7 d) is testable without network.
 - `server.js` — new `subscriptions` phase, its own client from `NOTIFICATIONS_TOKEN`, error captured
   as `subscriptions.error` instead of failing the refresh; `POST /subscriptions/unsubscribe`

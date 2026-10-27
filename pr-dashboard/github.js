@@ -5,6 +5,8 @@ const GRAPHQL_URL = `${API_URL}/graphql`;
 const DEFAULT_BRANCH_RUNS = 50;
 const RECENT_RUNS = 100;
 const REPO_BATCH_SIZE = 6;
+const SUBSCRIPTION_LIMIT = 30;
+const NOTIFICATION_PAGE_LIMIT = 10;
 const RETRYABLE_STATUSES = new Set([502, 503, 504]);
 
 const RENOVATE_CONFIG_FILES = [
@@ -224,10 +226,15 @@ function createGitHubClient({
     return payload.data;
   }
 
-  async function rest(operation, path) {
+  async function rest(operation, path, { notificationPage = false } = {}) {
     const started = Date.now();
     const cached = restCache.get(path);
-    const init = { headers: { Accept: 'application/vnd.github+json', ...(cached ? { 'If-None-Match': cached.etag } : {}) } };
+    if (notificationPage && cached?.pollAfter > started) return cached;
+    const init = { redirect: 'error', headers: {
+      Accept: 'application/vnd.github+json',
+      ...(cached?.etag ? { 'If-None-Match': cached.etag } : {}),
+      ...(cached?.lastModified ? { 'If-Modified-Since': cached.lastModified } : {}),
+    } };
 
     let response = await send(operation, `${API_URL}${path}`, init);
     let retried = false;
@@ -237,7 +244,12 @@ function createGitHubClient({
     }
 
     const meta = track(response);
-    if (response.status === 304 && cached) return cached.body;
+    const pollInterval = headerNumber(response.headers, 'x-poll-interval');
+    if (response.status === 304 && cached) {
+      cached.pollInterval = pollInterval ?? cached.pollInterval;
+      cached.pollAfter = Date.now() + (cached.pollInterval || 0) * 1000;
+      return notificationPage ? cached : cached.body;
+    }
     if (!response.ok) {
       const text = await response.text().catch(() => '');
       throw new GitHubError(`GitHub REST "${operation}" responded ${response.status}`, {
@@ -252,8 +264,118 @@ function createGitHubClient({
 
     const body = await response.json();
     const etag = response.headers.get('etag');
-    if (etag) restCache.set(path, { etag, body });
-    return body;
+    const entry = {
+      body, etag, lastModified: response.headers.get('last-modified'),
+      link: response.headers.get('link'), pollInterval,
+      pollAfter: Date.now() + (pollInterval || 0) * 1000,
+    };
+    if (notificationPage || etag || entry.lastModified) restCache.set(path, entry);
+    else restCache.delete(path);
+    return notificationPage ? entry : body;
+  }
+
+  async function fetchSubscriptions({ excludeOwners = [], stateClient } = {}) {
+    const warnings = [];
+    const excluded = new Set(excludeOwners.map((owner) => owner.toLowerCase()));
+    const candidates = new Map();
+    const visited = new Set();
+    let path = '/notifications?all=true&per_page=100';
+    let truncated = false;
+
+    for (let page = 0; path && page < NOTIFICATION_PAGE_LIMIT; page++) {
+      if (visited.has(path)) { truncated = true; break; }
+      visited.add(path);
+      const response = await rest('notifications', path, { notificationPage: true });
+      for (const thread of response.body) {
+        const { subject, repository } = thread;
+        if (thread.reason !== 'manual' || !['Issue', 'PullRequest', 'Discussion'].includes(subject?.type)) continue;
+        const repo = repository?.full_name;
+        const [owner, name] = (repo || '').split('/');
+        if (excluded.has(owner?.toLowerCase())) continue;
+        const kind = { Issue: 'issues', PullRequest: 'pulls', Discussion: 'discussions' }[subject.type];
+        // Never follow a subject URL: validate its identity, then build our own query and browser URL.
+        const match = subject.url?.match(/^https:\/\/api\.github\.com\/repos\/([\w.-]+)\/([\w.-]+)\/(issues|pulls|discussions)\/([1-9]\d*)$/);
+        if (!match || `${match[1]}/${match[2]}`.toLowerCase() !== repo?.toLowerCase() || match[3] !== kind || !/^[1-9]\d*$/.test(String(thread.id)) || !Number.isSafeInteger(Number(match[4]))) {
+          warnings.push(`Invalid notification subject for thread ${thread.id}; skipped.`);
+          continue;
+        }
+        const key = `${repo.toLowerCase()}/${kind}/${match[4]}`;
+        if (candidates.has(key)) continue;
+        if (candidates.size === SUBSCRIPTION_LIMIT) { truncated = true; break; }
+        candidates.set(key, {
+          id: String(thread.id), url: `https://github.com/${owner}/${name}/${kind === 'pulls' ? 'pull' : kind}/${match[4]}`,
+          repo, owner, number: Number(match[4]), title: subject.title, type: subject.type,
+          unread: Boolean(thread.unread), updatedAt: thread.updated_at,
+          subscribed: null, state: null, closedAt: null, mergedAt: null,
+        });
+      }
+      const next = response.link?.match(/<([^>]+)>;\s*rel="next"/)?.[1];
+      path = null;
+      if (next) {
+        try {
+          const url = new URL(next);
+          if (url.origin !== API_URL || url.pathname !== '/notifications' || url.username || url.password || url.hash) throw new Error('Invalid pagination URL');
+          path = `${url.pathname}${url.search}`;
+        } catch {
+          warnings.push('Invalid notification pagination link; discovery stopped.');
+          truncated = true;
+        }
+      }
+      if (truncated || (candidates.size === SUBSCRIPTION_LIMIT && path)) { truncated = true; break; }
+    }
+    if (path) truncated = true;
+    if (truncated) warnings.push(`Subscription discovery truncated at ${SUBSCRIPTION_LIMIT} subjects or ${NOTIFICATION_PAGE_LIMIT} notification pages.`);
+
+    const threads = [];
+    for (const thread of candidates.values()) {
+      try {
+        const subscription = await rest('thread-subscription', `/notifications/threads/${thread.id}/subscription`);
+        if (subscription.subscribed === false || subscription.ignored === true) continue;
+        thread.subscribed = typeof subscription.subscribed === 'boolean' ? subscription.subscribed : null;
+        if (thread.subscribed === null) warnings.push(`Subscription status unknown for thread ${thread.id}.`);
+      } catch (error) {
+        if (error.status === 404) continue;
+        warnings.push(`Subscription status unknown for thread ${thread.id}: ${error.message}`);
+      }
+      threads.push(thread);
+    }
+
+    for (let start = 0; start < threads.length; start += REPO_BATCH_SIZE) {
+      const batch = threads.slice(start, start + REPO_BATCH_SIZE);
+      const fields = batch.map((thread, i) => {
+        const field = { Issue: 'issue', PullRequest: 'pullRequest', Discussion: 'discussion' }[thread.type];
+        const stateFields = thread.type === 'Discussion' ? 'closed closedAt' : `state closedAt${thread.type === 'PullRequest' ? ' mergedAt' : ''}`;
+        return `repo${i}: repository(owner: ${JSON.stringify(thread.owner)}, name: ${JSON.stringify(thread.repo.split('/')[1])}) { subject: ${field}(number: ${thread.number}) { ${stateFields} } }`;
+      });
+      let data;
+      try {
+        if (!stateClient) throw new Error('Viewer state client unavailable');
+        data = await stateClient.graphql('subscription-subjects', `query { ${fields.join('\n')} }`);
+      } catch (error) {
+        warnings.push(`Subscription subject states unavailable: ${error.message}`);
+      }
+      batch.forEach((thread, i) => {
+        const subject = data?.[`repo${i}`]?.subject;
+        thread.state = thread.type === 'Discussion'
+          ? (typeof subject?.closed === 'boolean' ? (subject.closed ? 'CLOSED' : 'OPEN') : null)
+          : subject?.state || null;
+        thread.closedAt = subject?.closedAt || null;
+        thread.mergedAt = subject?.mergedAt || null;
+        if (!thread.state) warnings.push(`Subject state unknown for ${thread.repo}#${thread.number}.`);
+      });
+    }
+    return { threads, warnings, truncated };
+  }
+
+  async function unsubscribe(threadId) {
+    if (!/^[1-9]\d*$/.test(String(threadId))) throw new Error('Invalid notification thread ID');
+    const path = `/notifications/threads/${threadId}/subscription`;
+    const response = await send('unsubscribe', `${API_URL}${path}`, {
+      method: 'DELETE', redirect: 'error', headers: { Accept: 'application/vnd.github+json' },
+    });
+    const meta = track(response);
+    if (!response.ok) throw new GitHubError(`GitHub REST "unsubscribe" responded ${response.status}`, { operation: 'unsubscribe', path, ...meta });
+    restCache.delete(path);
   }
 
   async function fetchActionRuns(nameWithOwner, branch) {
@@ -343,7 +465,7 @@ function createGitHubClient({
     return [...rateLimits.values()].sort((a, b) => a.remaining / a.limit - b.remaining / b.limit)[0] || null;
   }
 
-  return { fetchContributions, fetchOwnerRepos, fetchViewer, graphql, rest, rateLimit: lowestRateLimit };
+  return { fetchContributions, fetchOwnerRepos, fetchViewer, fetchSubscriptions, unsubscribe, graphql, rest, rateLimit: lowestRateLimit };
 }
 
 function parseOwnerTokens(raw) {

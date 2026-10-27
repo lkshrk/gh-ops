@@ -108,6 +108,16 @@ function buildContributions(openPullRequests, closedPullRequests, viewer, done =
   };
 }
 
+function summarizeSubscriptions(threads, { now = new Date() } = {}) {
+  const cutoff = now.getTime() - 7 * 86400000;
+  const items = threads.filter((thread) => {
+    if (thread.state !== 'CLOSED' && thread.state !== 'MERGED') return true;
+    const closedAt = Date.parse(thread.closedAt || thread.mergedAt);
+    return !Number.isFinite(closedAt) || closedAt >= cutoff;
+  });
+  return { items, unread: items.filter((thread) => thread.unread).length, hidden: threads.length - items.length };
+}
+
 function repoMeta(repo) {
   const [owner, name] = repo.nameWithOwner.split('/');
   return { repo: repo.nameWithOwner, owner, name, private: Boolean(repo.isPrivate), url: repo.url };
@@ -339,6 +349,7 @@ export {
   isDoneValid,
   ownerOrder,
   summarizeContribution,
+  summarizeSubscriptions,
   summarizeRenovate,
   summarizeWorkflows,
   workflowHistory,
