@@ -1,5 +1,6 @@
 const OWNER_HUES = 8;
 const POLL_MS = 20 * 1000;
+const REAUTH_COOLDOWN_MS = 30 * 1000;
 const STALE_DAYS = 30;
 const AGING_DAYS = 7;
 const LAG_DAYS = 3;
@@ -335,8 +336,31 @@ function render() {
   banner.textContent = problems.join(' ');
 }
 
+// Once the gateway's session cookies expire it answers with a redirect to its login flow. A fetch
+// can never complete that flow, so an open tab would poll against a redirect forever until it is
+// reloaded by hand. Only a top-level navigation renews the session; done while the tab is in the
+// background it signs back in silently, and the dashboard is live again when it is next looked at.
+function reauthenticate() {
+  let last = 0;
+  try {
+    last = Number(sessionStorage.getItem('reauthenticatedAt') || 0);
+  } catch {}
+  if (Date.now() - last < REAUTH_COOLDOWN_MS) return false;
+  try {
+    sessionStorage.setItem('reauthenticatedAt', String(Date.now()));
+  } catch {}
+  location.reload();
+  return true;
+}
+
 async function load(request) {
   const response = await request;
+  // A manual redirect is reported as an opaque redirect instead of failing the fetch, which is the
+  // only signal that the request reached the gateway but was sent to the login flow.
+  if (response.type === 'opaqueredirect') {
+    if (!reauthenticate()) throw new Error('session expired, reload to sign in again');
+    throw new Error('session expired, signing in again');
+  }
   const body = await response.json();
   if (!response.ok) throw new Error(body.error || response.statusText);
   data = body;
@@ -351,6 +375,7 @@ async function setDone(button) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url: button.dataset.url, done: button.dataset.done === 'true' }),
+        redirect: 'manual',
       }),
     );
   } catch (error) {
@@ -363,7 +388,7 @@ async function setDone(button) {
 
 async function poll() {
   try {
-    await load(fetch('data.json', { cache: 'no-store' }));
+    await load(fetch('data.json', { cache: 'no-store', redirect: 'manual' }));
   } catch (error) {
     const banner = document.getElementById('banner');
     banner.hidden = false;
