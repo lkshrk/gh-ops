@@ -279,7 +279,7 @@ function createGitHubClient({
     const excluded = new Set(excludeOwners.map((owner) => owner.toLowerCase()));
     const candidates = new Map();
     const visited = new Set();
-    let path = '/notifications?all=true&per_page=100';
+    let path = '/notifications?all=true&participating=true&per_page=100';
     let truncated = false;
 
     for (let page = 0; path && page < NOTIFICATION_PAGE_LIMIT; page++) {

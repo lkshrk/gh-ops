@@ -1,5 +1,6 @@
 import { expect, test, spyOn } from 'bun:test';
 import { createGitHubClient } from './github.js';
+import { createLogger } from './log.js';
 import * as dashboard from './dashboard.js';
 
 const API = 'https://api.github.com';
@@ -33,7 +34,7 @@ test('follows short Link pages; filters manual external supported subjects and d
       notification(6, 'Issue', { repository: { full_name: 'ME/project', owner: { login: 'ME' } } }),
       notification(1),
     ]);
-    return json([notification(1)], 200, { Link: `<${API}/notifications?all=true&per_page=100&page=2>; rel="next"` });
+    return json([notification(1)], 200, { Link: `<${API}/notifications?all=true&participating=true&per_page=100&page=2>; rel="next"` });
   });
   const result = await c.fetchSubscriptions({ excludeOwners: ['me'], stateClient: stateClient({ repo2: { closed: true, closedAt: '2026-10-25T00:00:00Z' } }) });
   expect(result.threads.map((t) => t.id)).toEqual(['1', '2', '3']);
@@ -43,6 +44,30 @@ test('follows short Link pages; filters manual external supported subjects and d
   expect(result.truncated).toBe(false);
   expect(requested.filter((url) => url.includes('/subscription'))).toHaveLength(3);
   expect(new URL(requested[0]).searchParams.get('all')).toBe('true');
+  expect(new URL(requested[0]).searchParams.get('participating')).toBe('true');
+  expect(new URL(requested[0]).searchParams.get('per_page')).toBe('100');
+});
+
+test('participation-filtered discovery reaches late manual candidates within the page budget', async () => {
+  let pages = 0;
+  const c = client(async (url) => {
+    if (url.includes('/subscription')) return json({ subscribed: true });
+    pages++;
+    const params = new URL(url).searchParams;
+    const page = Number(params.get('page') || 1);
+    // Model the observed 364/8 versus 1536/31 feeds, including clamped short pages.
+    const total = params.get('participating') === 'true' ? 364 : 1536;
+    const last = Math.ceil(total / 50);
+    const rows = Array.from({ length: Math.min(50, total - (page - 1) * 50) }, (_, i) =>
+      notification((page - 1) * 50 + i + 1, 'Issue', { reason: 'mention' }));
+    if (page === last) rows[rows.length - 1] = notification(9000);
+    params.set('page', String(page + 1));
+    return json(rows, 200, page < last ? { Link: `<${API}/notifications?${params}>; rel="next"` } : {});
+  });
+  const result = await c.fetchSubscriptions({ stateClient: stateClient() });
+  expect(result.threads.map(({ id }) => id)).toEqual(['9000']);
+  expect(result.truncated).toBe(false);
+  expect(pages).toBe(8);
 });
 
 test('subscription 404 and false/ignored disappear; 403 and 5xx remain unknown with warnings', async () => {
@@ -57,11 +82,30 @@ test('subscription 404 and false/ignored disappear; 403 and 5xx remain unknown w
   expect(result.warnings).toHaveLength(2);
 });
 
+test('unknown subscriptions survive old known closures while confirmed old subscriptions are hidden', async () => {
+  const c = client(async (url) => {
+    if (!url.includes('/subscription')) return json([notification(1), notification(2, 'PullRequest'), notification(3)]);
+    const id = url.match(/threads\/(\d+)/)[1];
+    return id === '1' ? json({}, 403) : id === '2' ? json({}, 503) : json({ subscribed: true });
+  });
+  const result = await c.fetchSubscriptions({ stateClient: stateClient({
+    repo0: { state: 'CLOSED', closedAt: '2020-01-01T00:00:00Z' },
+    repo1: { state: 'MERGED', mergedAt: '2020-01-01T00:00:00Z' },
+    repo2: { state: 'CLOSED', closedAt: '2020-01-01T00:00:00Z' },
+  }) });
+  expect(result.threads.map(({ subscribed }) => subscribed)).toEqual([null, null, true]);
+  expect(result.warnings).toHaveLength(2);
+  const summary = dashboard.summarizeSubscriptions(result.threads, { now: new Date('2026-10-27T12:00:00Z') });
+  expect(summary.items.map(({ id }) => id)).toEqual(['1', '2']);
+  expect(summary.unread).toBe(2);
+  expect(summary.hidden).toBe(1);
+});
+
 test('caps discovery at ten pages and thirty candidate subjects with explicit truncation', async () => {
   let pages = 0;
   const paged = client(async () => {
     pages++;
-    return json([], 200, { Link: `<${API}/notifications?all=true&page=${pages + 1}>; rel="next"` });
+    return json([], 200, { Link: `<${API}/notifications?all=true&participating=true&page=${pages + 1}>; rel="next"` });
   });
   expect((await paged.fetchSubscriptions({ stateClient: stateClient() })).truncated).toBe(true);
   expect(pages).toBe(10);
@@ -95,10 +139,17 @@ test('rejects external/mismatched subject URLs and external pagination without f
 
 test('keeps inaccessible subject state unknown with a warning; never needs notification-token GraphQL', async () => {
   const c = client(async (url) => url.includes('/subscription') ? json({ subscribed: true }) : json([notification(1)]));
-  const inaccessible = createGitHubClient({ token: 'viewer', fetchImpl: async () => json({ data: { repo0: null }, errors: [{ message: 'not accessible' }] }) });
+  const logs = [];
+  const logger = createLogger({ level: 'warn', write: (line) => logs.push(JSON.parse(line)) });
+  const inaccessible = createGitHubClient({ token: 'viewer', logger, fetchImpl: async () => json({ data: { repo0: null }, errors: [{ message: 'not accessible' }] }) });
   const result = await c.fetchSubscriptions({ stateClient: inaccessible });
   expect(result.threads[0].state).toBeNull();
   expect(result.warnings.length).toBeGreaterThan(0);
+  expect(logs).toHaveLength(1);
+  expect(logs[0]).toMatchObject({
+    level: 'warn', msg: 'GitHub returned partial data', operation: 'subscription-subjects',
+    graphqlErrors: [{ message: 'not accessible' }],
+  });
 });
 
 test('a viewer lookup failure preserves threads, and a missing viewer never falls back to notification GraphQL', async () => {
@@ -154,7 +205,7 @@ test('obeys poll interval, reuses 304 body and Link, and uses Last-Modified with
       if (polls.length > 2) return new Response(null, { status: 304, headers: { 'X-Poll-Interval': '120' } });
       return json([notification(url.includes('page=2') ? 2 : 1)], 200, {
         'Last-Modified': 'Mon, 26 Oct 2026 00:00:00 GMT', 'X-Poll-Interval': '60',
-        ...(url.includes('page=2') ? {} : { Link: `<${API}/notifications?all=true&page=2>; rel="next"` }),
+        ...(url.includes('page=2') ? {} : { Link: `<${API}/notifications?all=true&participating=true&page=2>; rel="next"` }),
       });
     });
     await c.fetchSubscriptions({ stateClient: stateClient() });
@@ -210,7 +261,7 @@ test('summary hides only closures strictly older than seven days and counts visi
     { id: 'invalid-date', state: 'CLOSED', closedAt: 'invalid', unread: false },
   ];
   expect(dashboard.summarizeSubscriptions).toBeFunction();
-  const result = dashboard.summarizeSubscriptions(rows, { now });
+  const result = dashboard.summarizeSubscriptions(rows.map((row) => ({ ...row, subscribed: true })), { now });
   expect(result.items.map((r) => r.id)).toEqual(['boundary', 'recent-merge', 'reopened', 'unknown-date', 'unknown-state', 'invalid-date']);
   expect(result.unread).toBe(3);
   expect(result.hidden).toBe(2);

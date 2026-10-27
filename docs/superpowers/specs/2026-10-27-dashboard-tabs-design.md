@@ -89,7 +89,8 @@ is limited to threads returned by the notifications API, not an exhaustive subsc
    (`CLOSED_GRACE_DAYS = 7`, strictly older than the snapshot time; a merge counts as closed). The
    last week of closed threads stays visible so a wrap-up is still noticeable.
 5. **Unknown state or unknown subscription keeps the thread.** If either lookup fails, nothing is
-   hidden — the panel shows an inline note rather than silently dropping rows it cannot classify.
+   hidden — even a known old closure remains visible when subscription status is unknown. The panel
+   shows an inline note rather than silently dropping rows it cannot classify.
 6. **Discussions are rendered** (one of the six is a Discussion), linking to
    `github.com/<repo>/discussions/<n>`, with `closed` mapped to CLOSED/OPEN.
 7. **Tab state lives in the URL hash and `localStorage`** (`#subscriptions`), hash first. This also
@@ -123,12 +124,15 @@ is limited to threads returned by the notifications API, not an exhaustive subsc
 
 ## Parts (what gets touched)
 
-- `github.js` — `fetchSubscriptions({ excludeOwners, stateClient })`: page `?all=true&per_page=100`
+- `github.js` — `fetchSubscriptions({ excludeOwners, stateClient })`: page `?all=true&participating=true&per_page=100`
   (cap 10 pages), keep `reason === 'manual'`, drop own-owner repos, dedupe by subject URL, cap at
   `SUBSCRIPTION_LIMIT`; internal subscription checks (`GET .../subscription`, 404 = gone, returns
   `subscribed: true/false`, unknown on lookup failure); viewer-client batched state lookup
   (`issue`/`pullRequest`/`discussion` by number); follow validated Link pagination even on short pages.
   `unsubscribe(threadId)` (`DELETE .../subscription`, accepts empty 204 and throws on failure).
+  Retain the planned participation filter: the observed feed had the same six manual candidates in
+  364 notifications / eight pages, versus 1,536 / 31 pages without it. Broadening discovery has no
+  demonstrated coverage benefit and can exhaust the ten-page cap before reaching older candidates.
 - `dashboard.js` — `summarizeSubscriptions(threads, { now })` → `{ items, unread, hidden }`;
   pure, so filtering (own repos, unsubscribed, closed > 7 d) is testable without network.
 - `server.js` — new `subscriptions` phase, its own client from `NOTIFICATIONS_TOKEN`, error captured
