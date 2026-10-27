@@ -224,7 +224,7 @@ function renderWorkflows() {
   const failing = visible(data.workflows.failing);
   const recent = visible(data.workflows.recent);
   const recentBlock = recent.length
-    ? `<details class="more"><summary>Recently failed, not yet ${data.workflows.failStreak}× in a row <span class="count">${recent.length}</span></summary>
+    ? `<details class="more" open><summary>Recently failed, not yet ${data.workflows.failStreak}× in a row <span class="count">${recent.length}</span></summary>
         <ul class="rows">${recent.map(workflowRow).join('')}</ul></details>`
     : '';
 
