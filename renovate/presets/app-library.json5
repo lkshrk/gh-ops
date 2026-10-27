@@ -2,5 +2,6 @@
   $schema: "https://docs.renovatebot.com/renovate-schema.json",
   extends: [
     "github>lkshrk/gh-ops//renovate/presets/default.json5",
+    "github>lkshrk/gh-ops//renovate/presets/github-actions.json5",
   ],
 }
