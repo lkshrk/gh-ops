@@ -33,19 +33,24 @@ test('missing notifications credentials produce an empty unavailable section wit
 
 test('discovery failures stay in subscriptions, retain previous rows, and recover independently', async () => {
   let fail = false;
+  let mutations = 0;
   const stateClient = { viewer: true };
   const h = harness(() => ({ fetchSubscriptions: async (options) => {
     expect(options.stateClient).toBe(stateClient);
     expect(options.excludeOwners).toEqual(['me']);
     if (fail) throw new Error('notifications denied');
     return { ...result(), warnings: ['partial discovery'], truncated: true };
-  } }));
+  }, unsubscribe: async () => { mutations++; } }));
   const refresh = async () => { await h.controller.refresh({ stateClient, excludeOwners: ['me'] }); h.rebuild(); };
   await refresh();
+  expect(h.snapshot().subscriptions.canUnsubscribe).toBe(true);
   fail = true;
   await refresh();
   expect(h.snapshot().subscriptions.error).toBe('notifications denied');
   expect(h.snapshot().subscriptions.items).toEqual([row]);
+  expect((await h.controller.unsubscribe(request())).status).toBe(503);
+  expect(mutations).toBe(0);
+  expect(h.snapshot().subscriptions.canUnsubscribe).toBe(false);
   expect(h.snapshot().subscriptions.warnings).toEqual(['partial discovery']);
   expect(h.snapshot().subscriptions.truncated).toBe(true);
   expect(h.snapshot().repoCount).toBe(0);
@@ -53,6 +58,9 @@ test('discovery failures stay in subscriptions, retain previous rows, and recove
   fail = false;
   await refresh();
   expect(h.snapshot().subscriptions.error).toBeNull();
+  expect(h.snapshot().subscriptions.canUnsubscribe).toBe(true);
+  expect((await h.controller.unsubscribe(request())).status).toBe(200);
+  expect(mutations).toBe(1);
 });
 
 test('unknown subscription rows survive old closure and cannot be unsubscribed', async () => {
@@ -200,6 +208,6 @@ for (const notifications of ['absent', 'failing']) {
     expect(snapshot.renovate.untracked[0].repo).toBe('me/repo-2');
     expect(snapshot.contributions.open[0].title).toBe('Revision 2');
     expect(snapshot.subscriptions.error).toBe(notifications === 'absent' ? null : 'notifications denied');
-    expect(snapshot.subscriptions.canUnsubscribe).toBe(notifications !== 'absent');
+    expect(snapshot.subscriptions.canUnsubscribe).toBe(false);
   });
 }

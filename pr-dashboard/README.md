@@ -72,9 +72,10 @@ named in a banner; the other owners keep refreshing.
 #### Notifications token
 
 `NOTIFICATIONS_TOKEN` is separate from the per-owner fine-grained tokens and should belong to
-the same GitHub user as the dashboard viewer. GitHub's
-[Notifications API documentation](https://docs.github.com/en/rest/activity/notifications)
-requires a **classic PAT with `notifications` or `repo` scope**. Listing notifications does not
+the same GitHub user as the dashboard viewer. The recommended deployment credential is a
+**classic PAT with `notifications` or `repo` scope**. GitHub's
+[Notifications API](https://docs.github.com/en/rest/activity/notifications) also supports OAuth
+notification credentials with `notifications` or `repo` scope. Listing notifications does not
 support fine-grained PATs or GitHub App tokens. Prefer the narrower `notifications` scope for
 notification access; `repo` grants broader repository access and is not needed just for this API.
 Organization access policies still apply.
@@ -93,7 +94,8 @@ supplies this variable.
   owners configured in `GITHUB_TOKENS`. Mentions, assignments, repository watching and other
   notification reasons do not qualify. This is notification-based discovery, **not an inventory
   of every historical subscription**: a subscription without an available matching notification
-  cannot be found.
+  cannot be found. If GitHub relabels a manually subscribed thread's notification from `manual`
+  to `mention`, its existing row disappears on the next successful discovery.
 - Each distinct subject's thread subscription is checked. Unsubscribed, ignored and `404`
   subscriptions are omitted. Failed or inconclusive checks remain visible as **Unknown
   subscription**, with warnings and no Unsubscribe button.
@@ -101,12 +103,13 @@ supplies this variable.
   subject's actual closure/merge time. Exactly seven days old is retained. Open subjects, unknown
   subscription status, unknown subject state, and missing/invalid closure dates stay visible.
   The hidden count reports this age filter; unread counts cover visible rows.
-- Discovery stops at **10 pages of 100 notifications** or **30 distinct candidate subjects**.
+- Discovery stops at **10 notification pages** or **30 distinct candidate subjects**.
   These limits apply before subscription/age filtering, so fewer rows may remain; six is only
   the GraphQL lookup batch size, not a display limit. Partial results carry a truncation warning.
 - Without `NOTIFICATIONS_TOKEN`, no notification requests are made and Unsubscribe is disabled.
   Discovery errors are isolated to this tab, which retains previous data when available and
-  reports the error. Unknown-state warnings and truncation remain visible.
+  reports the error. Unsubscribe is unavailable during discovery errors and returns after a
+  successful refresh. Unknown-state warnings and truncation remain visible.
 - **Unsubscribe** deletes the notification thread subscription with GitHub's
   [`DELETE /notifications/threads/{thread_id}/subscription`](https://docs.github.com/en/rest/activity/notifications#delete-a-thread-subscription).
   The row disappears only after success; failure retains it. This is not mark-read, mark-done,

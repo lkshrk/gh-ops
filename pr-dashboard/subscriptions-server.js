@@ -12,7 +12,7 @@ export function createSubscriptionsController({ createClient, rebuild, respond, 
       warnings: data.warnings,
       truncated: data.truncated,
       error,
-      canUnsubscribe: Boolean(createClient),
+      canUnsubscribe: Boolean(createClient) && error === null,
     };
   }
 
@@ -39,7 +39,7 @@ export function createSubscriptionsController({ createClient, rebuild, respond, 
     if (site && site !== 'same-origin') return json(403, { error: 'cross-site request' });
     const body = await request.json().catch(() => null);
     if (typeof body?.url !== 'string') return json(400, { error: 'expected {"url": string}' });
-    if (!createClient) return json(503, { error: 'notifications unavailable' });
+    if (!snapshot().canUnsubscribe) return json(503, { error: 'notifications unavailable' });
     const thread = snapshot().items.find((item) => item.url === body.url && item.subscribed === true);
     if (!thread) return json(404, { error: 'no eligible subscription with that url' });
 

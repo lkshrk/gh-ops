@@ -192,7 +192,7 @@ test('counts reflect visible rows, owner filtering only affects own repositories
 test('subscriptions escape text and show type/state/unread, warnings and unavailable states', async () => {
   const ui = client();
   const snapshot = fixture();
-  snapshot.subscriptions = { ...snapshot.subscriptions, error: '<error>', warnings: ['<lookup>'], truncated: true, hidden: 2,
+  snapshot.subscriptions = { ...snapshot.subscriptions, canUnsubscribe: false, error: '<error>', warnings: ['<lookup>'], truncated: true, hidden: 2,
     items: [
       { url: 'https://github.com/up/repo/issues/1', repo: '<repo>', title: '<title>', type: 'Issue', state: 'OPEN', unread: true, subscribed: true, updatedAt: new Date().toISOString() },
       { title: 'PR', type: 'PullRequest', state: 'MERGED', subscribed: true },
@@ -202,8 +202,8 @@ test('subscriptions escape text and show type/state/unread, warnings and unavail
   const html = ui.document.querySelector('#subscriptions .panel-body').innerHTML;
   for (const value of ['&#60;title&#62;', '&#60;repo&#62;', '&#60;error&#62;', '&#60;lookup&#62;', 'Issue', 'Pull request', 'Discussion', 'Open', 'Merged', 'Unread', 'Unknown', 'truncated', '2']) assert.ok(html.includes(value), value);
   assert.doesNotMatch(html, /<title>|<error>|<lookup>/);
-  assert.equal((html.match(/class="unsubscribe"/g) || []).length, 2);
-  snapshot.subscriptions = { ...snapshot.subscriptions, canUnsubscribe: false, items: [] };
+  assert.equal((html.match(/class="unsubscribe"/g) || []).length, 0);
+  snapshot.subscriptions = { ...snapshot.subscriptions, error: null, items: [] };
   await ui.show(snapshot);
   assert.match(ui.document.querySelector('#subscriptions .panel-body').innerHTML, /unavailable/i);
 });
@@ -227,6 +227,82 @@ test('unsubscribe posts once, disables immediately, renders success and preserve
   await pending;
   assert.equal(ui.document.getElementById('count-subscriptions').textContent, 0);
   assert.equal(ui.document.getElementById('subscriptions').hidden, false);
+});
+
+test('discovery error retains stale rows without controls and recovery restores controls', async () => {
+  const ui = client();
+  const snapshot = fixture();
+  snapshot.subscriptions.items = [{ title: 'retained thread', subscribed: true }];
+  for (const error of [null, 'notifications denied', null]) {
+    snapshot.subscriptions.error = error;
+    snapshot.subscriptions.canUnsubscribe = !error;
+    await ui.show(snapshot);
+    const html = ui.document.querySelector('#subscriptions .panel-body').innerHTML;
+    assert.match(html, /retained thread/);
+    assert.equal(html.includes('class="unsubscribe"'), !error);
+    if (error) {
+      assert.match(html, /notifications denied.*Showing previously fetched subscriptions/);
+      assert.doesNotMatch(html, /not configured/);
+    }
+  }
+});
+
+for (const actions of [['unsubscribe', 'unsubscribe'], ['setDone', 'unsubscribe'], ['unsubscribe', 'setDone']]) {
+  test(`mutations serialize through response application: ${actions.join(' then ')}`, async () => {
+    const initial = fixture();
+    initial.subscriptions.items = [1, 2].map((number) => ({
+      title: `thread ${number}`, url: `https://github.com/up/repo/issues/${number}`, subscribed: true,
+    }));
+    initial.contributions.attention = [{ title: 'PR', url: 'https://github.com/up/repo/pull/3', state: 'OPEN', reasons: ['ci-failing'] }];
+    let current = structuredClone(initial);
+    let release;
+    const delayedBody = new Promise((resolve) => { release = resolve; });
+    let requests = 0;
+    const ui = client({ request: async (url, options) => {
+      requests++;
+      if (requests === 2) {
+        // The first response must be rendered before the next request even starts.
+        assert.equal(ui.document.getElementById('count-subscriptions').textContent, current.subscriptions.items.length);
+        assert.equal(ui.document.querySelector('#contributions .panel-body').innerHTML.includes('>Undo<'), current.contributions.open.length > 0);
+      }
+      const body = JSON.parse(options.body);
+      if (url === 'subscriptions/unsubscribe') current.subscriptions.items = current.subscriptions.items.filter((item) => item.url !== body.url);
+      else {
+        current.contributions.open = current.contributions.attention.map((pr) => ({ ...pr, done: true }));
+        current.contributions.attention = [];
+      }
+      const snapshot = structuredClone(current);
+      return { ok: true, json: () => requests === 1 ? delayedBody.then(() => snapshot) : Promise.resolve(snapshot) };
+    } });
+    await ui.show(initial);
+    const pending = actions.map((action, index) => ui.context[action]({ disabled: false, dataset: {
+      url: action === 'unsubscribe' ? initial.subscriptions.items[index].url : initial.contributions.attention[0].url, done: 'true',
+    } }));
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(requests, 1, 'later mutation must wait even while the first body is parsing');
+    release();
+    await Promise.all(pending);
+    assert.equal(requests, 2);
+    const html = ui.document.querySelector('#subscriptions .panel-body').innerHTML;
+    for (const [index, action] of actions.entries()) if (action === 'unsubscribe') assert.ok(!html.includes(`thread ${index + 1}`));
+    assert.equal(ui.document.getElementById('count-subscriptions').textContent, actions.includes('setDone') ? 1 : 0);
+    if (actions.includes('setDone')) assert.match(ui.document.querySelector('#contributions .panel-body').innerHTML, />Undo</);
+  });
+}
+
+test('a failed mutation does not block a queued action', async () => {
+  let requests = 0;
+  const ui = client({ request: async () => {
+    if (++requests === 1) throw new Error('offline');
+    return { ok: true, json: async () => fixture() };
+  } });
+  await ui.show(fixture());
+  await Promise.all([
+    ui.context.setDone({ dataset: { url: 'https://github.com/up/repo/pull/1', done: 'true' } }),
+    ui.context.unsubscribe({ dataset: { url: 'https://github.com/up/repo/issues/2' } }),
+  ]);
+  assert.equal(requests, 2);
+  assert.equal(ui.document.getElementById('banner').hidden, true);
 });
 
 test('unsubscribe errors preserve rows and auth redirect reloads without retrying mutation', async () => {

@@ -14,6 +14,7 @@ const REASON_LABELS = {
 
 let data = null;
 let mutationVersion = 0;
+let mutationQueue = Promise.resolve();
 const hiddenOwners = new Set(loadHiddenOwners());
 const TABS = ['contributions', 'subscriptions', 'workflows', 'renovate'];
 const pendingUnsubscribes = new Set();
@@ -180,7 +181,7 @@ function renderSubscriptions() {
   if (!subscriptions) return emptyState('Subscriptions unavailable.');
   const { items, error, warnings, truncated, hidden, canUnsubscribe } = subscriptions;
   return [
-    !canUnsubscribe ? emptyState('Subscriptions unavailable: notifications access is not configured.') : '',
+    !canUnsubscribe && !error ? emptyState('Subscriptions unavailable: notifications access is not configured.') : '',
     error ? `<p class="subscription-notice" role="status">${esc(error)}${items.length ? ' · Showing previously fetched subscriptions.' : ''}</p>` : '',
     ...(warnings || []).map((warning) => `<p class="subscription-notice">${esc(warning)}</p>`),
     truncated ? '<p class="subscription-notice">Results truncated: only part of your subscriptions could be fetched.</p>' : '',
@@ -448,18 +449,22 @@ async function load(request, mutation = false) {
   render();
 }
 
+function mutate(url, body) {
+  // Serialize requests through rendering so an older mutation snapshot cannot restore rows.
+  const pending = mutationQueue.then(() => load(fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    redirect: 'manual',
+  }), true));
+  mutationQueue = pending.catch(() => {});
+  return pending;
+}
+
 async function setDone(button) {
   button.disabled = true;
   try {
-    await load(
-      fetch('contributions/done', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: button.dataset.url, done: button.dataset.done === 'true' }),
-        redirect: 'manual',
-      }),
-      true,
-    );
+    await mutate('contributions/done', { url: button.dataset.url, done: button.dataset.done === 'true' });
   } catch (error) {
     button.disabled = false;
     const banner = document.getElementById('banner');
@@ -485,12 +490,7 @@ async function unsubscribe(button) {
   pendingUnsubscribes.add(url);
   button.disabled = true;
   try {
-    await load(fetch('subscriptions/unsubscribe', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url }),
-      redirect: 'manual',
-    }), true);
+    await mutate('subscriptions/unsubscribe', { url });
   } catch (error) {
     button.disabled = false;
     const banner = document.getElementById('banner');
