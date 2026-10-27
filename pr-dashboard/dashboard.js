@@ -327,13 +327,17 @@ function ownerOrder(repos, viewer) {
   return owners.sort((a, b) => (a === viewer ? -1 : b === viewer ? 1 : a.localeCompare(b)));
 }
 
-function buildSnapshot({ viewer, repos, openPullRequests, closedPullRequests, done = {}, options = {}, now = new Date() }) {
+function buildSnapshot({
+  viewer, repos, openPullRequests, closedPullRequests, done = {}, options = {}, now = new Date(),
+  subscriptions = { items: [], unread: 0, hidden: 0, warnings: [], truncated: false, error: null, canUnsubscribe: false },
+}) {
   return {
     generatedAt: now.toISOString(),
     viewer,
     owners: ownerOrder(repos, viewer),
     repoCount: repos.length,
     contributions: buildContributions(openPullRequests, closedPullRequests, viewer, done),
+    subscriptions,
     workflows: summarizeWorkflows(repos, options),
     renovate: summarizeRenovate(repos, { ...options, now }),
   };

@@ -3,6 +3,7 @@ import { buildSnapshot, isDoneValid } from './dashboard.js';
 import { createGitHubClient, parseOwnerTokens } from './github.js';
 import { createLogger } from './log.js';
 import { createDoneStore } from './store.js';
+import { createSubscriptionsController } from './subscriptions-server.js';
 
 const logger = createLogger({ level: process.env.LOG_LEVEL || 'info' });
 
@@ -63,6 +64,14 @@ let failingSince = null;
 let consecutiveFailures = 0;
 const ownerState = new Map();
 const rateLimitWarnedFor = new Map();
+const subscriptions = createSubscriptionsController({
+  createClient: process.env.NOTIFICATIONS_TOKEN
+    ? () => createGitHubClient({ token: process.env.NOTIFICATIONS_TOKEN, logger: logger.child({ section: 'subscriptions' }) })
+    : null,
+  rebuild: rebuildSnapshot,
+  respond: dataResponse,
+  json,
+});
 
 function checkRateLimits() {
   for (const [owner, client] of Object.entries(clients)) {
@@ -129,6 +138,9 @@ async function refresh() {
     const closedSince = new Date(Date.now() - closedWindowDays * 86400000).toISOString().slice(0, 10);
     const contributions = await searchClient.fetchContributions({ viewer, excludeOwners: owners, closedSince });
 
+    phase = 'subscriptions';
+    await subscriptions.refresh({ excludeOwners: owners, stateClient: searchClient });
+
     phase = 'build';
     lastBuild = { viewer, repos, ...contributions, options, now: new Date(), ownerErrors: ownerErrors() };
     rebuildSnapshot();
@@ -172,7 +184,7 @@ async function refresh() {
 
 function rebuildSnapshot() {
   const { ownerErrors: errors, ...input } = lastBuild;
-  snapshot = { ...buildSnapshot({ ...input, done: doneStore.all() }), ownerErrors: errors };
+  snapshot = { ...buildSnapshot({ ...input, done: doneStore.all(), subscriptions: subscriptions.snapshot() }), ownerErrors: errors };
 }
 
 function openContributions() {
@@ -221,6 +233,7 @@ async function markDone(request) {
 function route(request) {
   const { pathname } = new URL(request.url);
 
+  if (pathname === '/subscriptions/unsubscribe') return subscriptions.unsubscribe(request);
   if (pathname === '/contributions/done') {
     return request.method === 'POST' ? markDone(request) : json(405, { error: 'method not allowed' });
   }
