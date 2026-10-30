@@ -220,7 +220,7 @@ test('old hidden owners cannot hide workflows, Renovate rows or counts, and poll
     assert.equal((kpis.match(/class="kpi /g) || []).length, 4);
     assert.match(kpis, /class="bad">2<\/span>/);
     assert.match(kpis, /2 more failed recently/);
-    assert.match(kpis, /need you \/ repos · 0 broken · 0 waiting/);
+    assert.match(kpis, /failing CI \/ with open PRs · 0 open PRs/);
     assert.doesNotMatch(kpis, /sub-alert/);
     assert.equal(ui.document.getElementById('subscriptions').hidden, false);
   }
@@ -575,34 +575,35 @@ test('subscription rows use the standard row markup with a state chip and no tra
   assert.doesNotMatch(html, /→|target=/);
 });
 
-test('Renovate splits repositories into broken, waiting and healthy sections with matching KPI', async () => {
+test('Renovate groups repositories by the CI state of their open PRs with matching KPI', async () => {
   const ui = client({ hash: '#renovate' });
   const snapshot = fixture();
-  const old = new Date(Date.now() - 5 * 86400000).toISOString();
-  const fresh = new Date().toISOString();
-  const pr = (name, ci, createdAt) => ({ title: 'bump', url: `https://github.com/me/${name}/pull/1`, number: 1, ci, createdAt });
-  const repo = (name, extra) => ({ owner: 'me', name, repo: `me/${name}`, open: [], recentlyMerged: { automerged: 3, manual: 1 }, ...extra });
+  const now = new Date().toISOString();
+  const pr = (name, ci) => ({ title: 'bump', url: `https://github.com/me/${name}/pull/${ci}`, number: 1, ci, createdAt: now });
+  const repo = (name, open = [], extra = {}) => ({ owner: 'me', name, repo: `me/${name}`, open, recentlyMerged: { automerged: 3, manual: 1 }, ...extra });
   snapshot.renovate.repos = [
-    repo('lagging', { open: [pr('lagging', 'success', old)] }),
-    repo('red-ci', { open: [pr('red-ci', 'failure', fresh)] }),
-    repo('approval', { health: { severity: 'ok', problems: [], warnings: [], counts: { pendingApproval: 2 } } }),
-    repo('broken-config', { health: { severity: 'error', problems: ['broken'], warnings: [], counts: {} }, open: [pr('broken-config', 'failure', old)] }),
-    repo('edited', { health: { severity: 'warn', problems: [], warnings: [], counts: { blocked: 1 } } }),
-    repo('quiet', { health: { severity: 'ok', problems: [], warnings: [], counts: { rateLimited: 1 } } }),
-    repo('green', { open: [pr('green', 'success', fresh)] }),
+    repo('mixed-red', [pr('mixed-red', 'success'), pr('mixed-red', 'failure')]),
+    repo('running', [pr('running', 'pending'), pr('running', 'success')]),
+    repo('no-ci', [pr('no-ci', 'none')]),
+    repo('green', [pr('green', 'success')]),
+    repo('broken-config', [], { health: { severity: 'error', problems: ['broken'], warnings: [], counts: {} } }),
+    repo('quiet'),
   ];
   await ui.show(snapshot);
   const html = ui.document.querySelector('#renovate .panel-body').innerHTML;
   const section = (title) => { const start = html.indexOf(`<h3>${title} `); const next = html.indexOf('<h3>', start + 4); return html.slice(start, next === -1 ? undefined : next); };
-  assert.match(html, /<div class="group attention">\s*<h3>Broken <span class="count">2<\/span><\/h3>/);
-  assert.match(html, /<div class="group warn">\s*<h3>Waiting on you <span class="count">3<\/span><\/h3>/);
-  assert.match(html, /<h3>Healthy <span class="count">2<\/span><\/h3>/);
-  for (const name of ['broken-config', 'edited']) assert.ok(section('Broken').includes(`>${name}<`), name);
-  for (const name of ['lagging', 'red-ci', 'approval']) assert.ok(section('Waiting on you').includes(`>${name}<`), name);
-  for (const name of ['quiet', 'green']) assert.ok(section('Healthy').includes(`>${name}<`), name);
+  assert.match(html, /<div class="group attention">\s*<h3>Failing CI <span class="count">1<\/span><\/h3>/);
+  assert.match(html, /<div class="group warn">\s*<h3>Pending <span class="count">2<\/span><\/h3>/);
+  assert.match(html, /<h3>All green <span class="count">1<\/span><\/h3>/);
+  assert.match(html, /<h3>No open PRs <span class="count">2<\/span><\/h3>/);
+  assert.ok(section('Failing CI').includes('>mixed-red<'));
+  for (const name of ['running', 'no-ci']) assert.ok(section('Pending').includes(`>${name}<`), name);
+  assert.ok(section('All green').includes('>green<'));
+  for (const name of ['broken-config', 'quiet']) assert.ok(section('No open PRs').includes(`>${name}<`), name);
+  assert.match(section('No open PRs'), /1 problem/);
   assert.match(html, /<span class="open-count empty" title="No open pull requests"><\/span>/);
   const kpis = ui.document.getElementById('kpis').innerHTML;
   assert.match(kpis, /<div class="kpi alert">\s*<span class="kpi-label">Renovate/);
-  assert.match(kpis, /class="bad">5<\/span><span class="of">\/<\/span><span class="total">7<\/span>/);
-  assert.match(kpis, /need you \/ repos · 2 broken · 3 waiting · 75% automerged/);
+  assert.match(kpis, /class="bad">1<\/span><span class="of">\/<\/span><span class="total">4<\/span>/);
+  assert.match(kpis, /failing CI \/ with open PRs · 6 open PRs · 75% automerged/);
 });

@@ -310,24 +310,24 @@ function renderRenovate() {
         <div class="repo-cloud">${untracked.map(ownRepo).join('')}</div></details>`
     : '';
 
-  const broken = repos.filter(isBroken);
-  const waiting = repos.filter(isWaiting);
+  const by = (status) => repos.filter((entry) => prStatus(entry) === status);
+  const failing = by('failing');
+  const pending = by('pending');
   return [
-    group('Broken', broken, renovateRow, 'No Renovate problems.', broken.length ? 'attention' : 'calm'),
-    group('Waiting on you', waiting, renovateRow, 'Nothing waiting on you.', waiting.length ? 'warn' : 'calm'),
-    group('Healthy', repos.filter((entry) => !isBroken(entry) && !isWaiting(entry)), renovateRow, 'No healthy repositories.'),
+    group('Failing CI', failing, renovateRow, 'No Renovate PR is failing CI.', failing.length ? 'attention' : 'calm'),
+    group('Pending', pending, renovateRow, 'No Renovate PR is waiting on CI.', pending.length ? 'warn' : ''),
+    group('All green', by('green'), renovateRow, 'No repository has only green Renovate PRs.'),
+    group('No open PRs', by('none'), renovateRow, 'Every repository has open Renovate PRs.'),
     onboardingBlock,
     untrackedBlock,
   ].join('');
 }
 
-function isBroken(entry) {
-  return Boolean(entry.health && entry.health.severity !== 'ok');
-}
-
-function isWaiting(entry) {
-  return !isBroken(entry)
-    && (isLagging(entry) || entry.open.some((pr) => pr.ci === 'failure') || Boolean(entry.health?.counts?.pendingApproval));
+function prStatus(entry) {
+  if (!entry.open.length) return 'none';
+  if (entry.open.some((pr) => pr.ci === 'failure')) return 'failing';
+  if (entry.open.some((pr) => pr.ci !== 'success')) return 'pending';
+  return 'green';
 }
 
 function renderKpis() {
@@ -342,8 +342,9 @@ function renderKpis() {
   const automerged = sum((entry) => entry.recentlyMerged.automerged);
   const manual = sum((entry) => entry.recentlyMerged.manual);
   const autoRate = automerged + manual ? Math.round((automerged / (automerged + manual)) * 100) : null;
-  const broken = repos.filter(isBroken).length;
-  const waiting = repos.filter(isWaiting).length;
+  const failingRepos = repos.filter((entry) => prStatus(entry) === 'failing').length;
+  const withPrs = repos.filter((entry) => entry.open.length).length;
+  const openPrs = sum((entry) => entry.open.length);
   const watched = data.subscriptions?.items.length ?? 0;
   const unread = data.subscriptions?.unread ?? 0;
 
@@ -363,10 +364,10 @@ function renderKpis() {
       <span class="kpi-value"><span class="${failing ? 'bad' : 'good'}">${failing}</span></span>
       <span class="kpi-sub">${data.workflows.failStreak}× in a row · ${recent} more failed recently</span>
     </div>
-    <div class="kpi ${broken ? 'alert' : waiting ? 'warn' : 'calm'}">
+    <div class="kpi ${failingRepos ? 'alert' : 'calm'}">
       <span class="kpi-label">Renovate</span>
-      <span class="kpi-value"><span class="${broken ? 'bad' : waiting ? 'lag' : 'good'}">${broken + waiting}</span><span class="of">/</span><span class="total">${repos.length}</span></span>
-      <span class="kpi-sub">need you / repos · ${broken} broken · ${waiting} waiting${autoRate === null ? '' : ` · ${autoRate}% automerged`}</span>
+      <span class="kpi-value"><span class="${failingRepos ? 'bad' : 'good'}">${failingRepos}</span><span class="of">/</span><span class="total">${withPrs}</span></span>
+      <span class="kpi-sub">failing CI / with open PRs · ${plural(openPrs, 'open PR')}${autoRate === null ? '' : ` · ${autoRate}% automerged`}</span>
     </div>`;
 }
 
