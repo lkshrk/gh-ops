@@ -122,6 +122,44 @@ function resolveTrigger(event, payload, options = {}) {
     return { shouldTrigger: false, reason: 'missing repository' };
   }
 
+  if (event === 'check_suite') {
+    const suite = payload.check_suite;
+    if (payload.action !== 'completed' || suite?.conclusion !== 'success') {
+      return { shouldTrigger: false, reason: 'check suite did not complete successfully' };
+    }
+
+    if (suite.app?.slug !== 'github-actions') {
+      return { shouldTrigger: false, reason: 'not a GitHub Actions check suite' };
+    }
+
+    if (typeof suite.head_branch !== 'string' || !suite.head_branch.startsWith('renovate/')) {
+      return { shouldTrigger: false, reason: 'not a Renovate branch' };
+    }
+
+    const repositoryId = payload.repository.id;
+    const hasMatchingPullRequest =
+      typeof repositoryId === 'number' &&
+      typeof suite.head_sha === 'string' &&
+      suite.head_sha.length > 0 &&
+      Array.isArray(suite.pull_requests) &&
+      suite.pull_requests.some(
+        (pr) =>
+          pr.head?.repo?.id === repositoryId &&
+          pr.head?.ref === suite.head_branch &&
+          pr.head?.sha === suite.head_sha,
+      );
+
+    if (!hasMatchingPullRequest) {
+      return { shouldTrigger: false, reason: 'no matching same-repository pull request' };
+    }
+
+    return {
+      shouldTrigger: true,
+      repository: repo,
+      reason: `check_suite.completed on ${suite.head_branch}`,
+    };
+  }
+
   if (event === 'registry_package') {
     const packageTargets =
       options.packageTargets || parsePackageTargets(process.env.PACKAGE_TRIGGER_TARGETS);

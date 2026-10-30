@@ -1,16 +1,30 @@
 # renovate-trigger-bridge
 
 Webhook receiver that fires a GitHub `repository_dispatch` event when a Renovate
-dashboard checkbox is checked in a managed repository, or when a mapped repository
-publishes a container image.
+dashboard checkbox is checked, when GitHub Actions succeeds on a Renovate pull
+request, or when a mapped repository publishes a container image.
 
 ## How it works
 
 The `renovate-master` GitHub App delivers webhook events (Issues, Pull request,
-Issue comment) to `/github-webhook`. When the bridge detects a newly-checked
-Renovate trigger checkbox it POSTs a `repository_dispatch` to GitHub, which
+Issue comment, Check suite, Registry package) to `/github-webhook`. When the
+bridge detects a newly-checked Renovate trigger checkbox it POSTs a
+`repository_dispatch` to GitHub, which
 triggers the `renovate.yml` workflow with `RENOVATE_REPO_FILTER` set to the
 source repository.
+
+`check_suite.completed` deliveries also trigger a run when a GitHub Actions suite
+succeeds on a `renovate/` branch and references a matching PR head in the same
+repository. This lets Renovate reconsider automerge after CI finishes instead of
+waiting for the two-hour schedule, including private repositories whose GitHub
+plan does not support native auto-merge. The bridge only requests a run; Renovate
+still enforces every CI, release-age, and approval gate. Failed suites, forked or
+unassociated heads, other apps, and non-Renovate branches are ignored. Central
+Renovate runs use `main`, so their completion cannot trigger another run.
+
+The Renovate workflow queues pending runs per owner with `queue: max` so a new
+targeted dispatch does not replace another repository's pending run. Running
+jobs are allowed to finish; the two-hour schedule remains the fallback.
 
 `registry_package.published` deliveries trigger a run for the consumer mapped to the
 publishing repository in `PACKAGE_TRIGGER_TARGETS`, so a self-published image is picked up
@@ -62,8 +76,16 @@ Built automatically by `.github/workflows/bridge-image.yml` on push to `main`.
 ## GitHub App webhook
 
 Point the `renovate-master` App webhook at `https://<bridge-host>/github-webhook`
-and subscribe to: **Issues**, **Pull request**, **Issue comment**, **Registry package**.
+and subscribe to: **Issues**, **Pull request**, **Issue comment**, **Check suite**,
+**Registry package**. Check suite events require **Checks: read**, which the
+`renovate-master` App already has; enable the event subscription separately in
+[the App's permissions settings](https://github.com/settings/apps/renovate-master/permissions).
 Registry package events need the App's **Packages: read** permission.
+
+After a bridge change is merged and its image is built, update the pinned image
+digest in `h-cloud/kubernetes/apps/tools/renovate-trigger-bridge/app/helmrelease.yaml`
+through Git so Flux deploys it. CI-completion triggers require both the deployed
+bridge image and the Check suite subscription.
 
 ## k8s deployment
 
