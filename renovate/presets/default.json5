@@ -18,6 +18,13 @@
   ],
   packageRules: [
     {
+      description: "Keep the Node.js runtime aligned across CI and Docker",
+      matchDatasources: ["node-version", "docker"],
+      matchDepNames: ["node"],
+      groupName: "Node.js",
+      groupSlug: "nodejs",
+    },
+    {
       matchUpdateTypes: ["patch", "minor", "pin", "digest"],
       automerge: true,
     },

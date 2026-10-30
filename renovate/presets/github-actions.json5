@@ -25,6 +25,7 @@
     {
       matchFileNames: [".github/workflows/**", ".github/actions/**"],
       matchUpdateTypes: ["minor", "patch", "digest", "pin", "pinDigest"],
+      matchDatasources: ["!node-version"],
       groupName: "github actions",
     },
     {
