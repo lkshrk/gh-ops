@@ -310,17 +310,24 @@ function renderRenovate() {
         <div class="repo-cloud">${untracked.map(ownRepo).join('')}</div></details>`
     : '';
 
-  const attention = repos.filter(needsAttention);
+  const broken = repos.filter(isBroken);
+  const waiting = repos.filter(isWaiting);
   return [
-    group('Needs attention', attention, renovateRow, 'Every Renovate repository is up to date.', attention.length ? 'warn' : 'calm'),
-    group('Up to date', repos.filter((entry) => !needsAttention(entry)), renovateRow, 'No repository is up to date.'),
+    group('Broken', broken, renovateRow, 'No Renovate problems.', broken.length ? 'attention' : 'calm'),
+    group('Waiting on you', waiting, renovateRow, 'Nothing waiting on you.', waiting.length ? 'warn' : 'calm'),
+    group('Healthy', repos.filter((entry) => !isBroken(entry) && !isWaiting(entry)), renovateRow, 'No healthy repositories.'),
     onboardingBlock,
     untrackedBlock,
   ].join('');
 }
 
-function needsAttention(entry) {
-  return isLagging(entry) || Boolean(entry.health && entry.health.severity !== 'ok');
+function isBroken(entry) {
+  return Boolean(entry.health && entry.health.severity !== 'ok');
+}
+
+function isWaiting(entry) {
+  return !isBroken(entry)
+    && (isLagging(entry) || entry.open.some((pr) => pr.ci === 'failure') || Boolean(entry.health?.counts?.pendingApproval));
 }
 
 function renderKpis() {
@@ -334,10 +341,9 @@ function renderKpis() {
   const sum = (pick) => repos.reduce((total, entry) => total + pick(entry), 0);
   const automerged = sum((entry) => entry.recentlyMerged.automerged);
   const manual = sum((entry) => entry.recentlyMerged.manual);
-  const pending = sum((entry) => entry.open.length);
   const autoRate = automerged + manual ? Math.round((automerged / (automerged + manual)) * 100) : null;
-  const troubled = repos.filter((entry) => entry.health && entry.health.severity !== 'ok').length;
-  const attentionRepos = repos.filter(needsAttention).length;
+  const broken = repos.filter(isBroken).length;
+  const waiting = repos.filter(isWaiting).length;
   const watched = data.subscriptions?.items.length ?? 0;
   const unread = data.subscriptions?.unread ?? 0;
 
@@ -357,10 +363,10 @@ function renderKpis() {
       <span class="kpi-value"><span class="${failing ? 'bad' : 'good'}">${failing}</span></span>
       <span class="kpi-sub">${data.workflows.failStreak}× in a row · ${recent} more failed recently</span>
     </div>
-    <div class="kpi ${troubled ? 'alert' : attentionRepos ? 'warn' : 'calm'}">
+    <div class="kpi ${broken ? 'alert' : waiting ? 'warn' : 'calm'}">
       <span class="kpi-label">Renovate</span>
-      <span class="kpi-value"><span class="${attentionRepos ? 'lag' : 'good'}">${attentionRepos}</span><span class="of">/</span><span class="total">${repos.length}</span></span>
-      <span class="kpi-sub">need attention / repos · ${plural(pending, 'open PR')}${autoRate === null ? '' : ` · ${autoRate}% automerged`}</span>
+      <span class="kpi-value"><span class="${broken ? 'bad' : waiting ? 'lag' : 'good'}">${broken + waiting}</span><span class="of">/</span><span class="total">${repos.length}</span></span>
+      <span class="kpi-sub">need you / repos · ${broken} broken · ${waiting} waiting${autoRate === null ? '' : ` · ${autoRate}% automerged`}</span>
     </div>`;
 }
 

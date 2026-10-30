@@ -220,7 +220,7 @@ test('old hidden owners cannot hide workflows, Renovate rows or counts, and poll
     assert.equal((kpis.match(/class="kpi /g) || []).length, 4);
     assert.match(kpis, /class="bad">2<\/span>/);
     assert.match(kpis, /2 more failed recently/);
-    assert.match(kpis, /need attention \/ repos/);
+    assert.match(kpis, /need you \/ repos · 0 broken · 0 waiting/);
     assert.doesNotMatch(kpis, /sub-alert/);
     assert.equal(ui.document.getElementById('subscriptions').hidden, false);
   }
@@ -575,23 +575,34 @@ test('subscription rows use the standard row markup with a state chip and no tra
   assert.doesNotMatch(html, /→|target=/);
 });
 
-test('Renovate splits repositories into attention and up-to-date sections with matching KPI', async () => {
+test('Renovate splits repositories into broken, waiting and healthy sections with matching KPI', async () => {
   const ui = client({ hash: '#renovate' });
   const snapshot = fixture();
   const old = new Date(Date.now() - 5 * 86400000).toISOString();
-  const repo = (name, extra) => ({ owner: 'me', name, repo: `me/${name}`, open: [], recentlyMerged: { automerged: 0, manual: 0 }, ...extra });
+  const fresh = new Date().toISOString();
+  const pr = (name, ci, createdAt) => ({ title: 'bump', url: `https://github.com/me/${name}/pull/1`, number: 1, ci, createdAt });
+  const repo = (name, extra) => ({ owner: 'me', name, repo: `me/${name}`, open: [], recentlyMerged: { automerged: 3, manual: 1 }, ...extra });
   snapshot.renovate.repos = [
-    repo('lagging', { open: [{ title: 'bump', url: 'https://github.com/me/lagging/pull/1', number: 1, ci: 'success', createdAt: old }] }),
-    repo('troubled', { health: { severity: 'error', problems: ['broken'], warnings: [], counts: {} } }),
-    repo('quiet'),
+    repo('lagging', { open: [pr('lagging', 'success', old)] }),
+    repo('red-ci', { open: [pr('red-ci', 'failure', fresh)] }),
+    repo('approval', { health: { severity: 'ok', problems: [], warnings: [], counts: { pendingApproval: 2 } } }),
+    repo('broken-config', { health: { severity: 'error', problems: ['broken'], warnings: [], counts: {} }, open: [pr('broken-config', 'failure', old)] }),
+    repo('edited', { health: { severity: 'warn', problems: [], warnings: [], counts: { blocked: 1 } } }),
+    repo('quiet', { health: { severity: 'ok', problems: [], warnings: [], counts: { rateLimited: 1 } } }),
+    repo('green', { open: [pr('green', 'success', fresh)] }),
   ];
   await ui.show(snapshot);
   const html = ui.document.querySelector('#renovate .panel-body').innerHTML;
-  assert.match(html, /<div class="group warn">\s*<h3>Needs attention <span class="count">2<\/span><\/h3>/);
-  assert.match(html, /<h3>Up to date <span class="count">1<\/span><\/h3>/);
-  assert.ok(html.indexOf('quiet') > html.indexOf('Up to date'));
+  const section = (title) => { const start = html.indexOf(`<h3>${title} `); const next = html.indexOf('<h3>', start + 4); return html.slice(start, next === -1 ? undefined : next); };
+  assert.match(html, /<div class="group attention">\s*<h3>Broken <span class="count">2<\/span><\/h3>/);
+  assert.match(html, /<div class="group warn">\s*<h3>Waiting on you <span class="count">3<\/span><\/h3>/);
+  assert.match(html, /<h3>Healthy <span class="count">2<\/span><\/h3>/);
+  for (const name of ['broken-config', 'edited']) assert.ok(section('Broken').includes(`>${name}<`), name);
+  for (const name of ['lagging', 'red-ci', 'approval']) assert.ok(section('Waiting on you').includes(`>${name}<`), name);
+  for (const name of ['quiet', 'green']) assert.ok(section('Healthy').includes(`>${name}<`), name);
   assert.match(html, /<span class="open-count empty" title="No open pull requests"><\/span>/);
   const kpis = ui.document.getElementById('kpis').innerHTML;
-  assert.match(kpis, /class="lag">2<\/span><span class="of">\/<\/span><span class="total">3<\/span>/);
-  assert.match(kpis, /need attention \/ repos · 1 open PR\b/);
+  assert.match(kpis, /<div class="kpi alert">\s*<span class="kpi-label">Renovate/);
+  assert.match(kpis, /class="bad">5<\/span><span class="of">\/<\/span><span class="total">7<\/span>/);
+  assert.match(kpis, /need you \/ repos · 2 broken · 3 waiting · 75% automerged/);
 });
