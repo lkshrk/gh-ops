@@ -47,7 +47,6 @@
         "@sveltejs/kit",
         "@sveltejs/adapter-*",
         "@sveltejs/vite-plugin-svelte*",
-        "@sveltejs/enhanced-img",
         "svelte",
       ],
       groupName: "SvelteKit",

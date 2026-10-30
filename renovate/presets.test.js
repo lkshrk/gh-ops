@@ -155,7 +155,9 @@ test('coordinated groups survive each shared profile and Actions-only consumptio
         ['Playwright', 'playwright', (dep) =>
           ['@playwright/test', 'playwright', 'playwright-core', '@playwright/browser-chromium',
             '@playwright/experimental-ct-svelte', 'mcr.microsoft.com/playwright'].includes(dep.depName)],
-        ['SvelteKit', 'sveltekit', (dep) => dep.depName.startsWith('@sveltejs/') ||
+        ['SvelteKit', 'sveltekit', (dep) => dep.depName === '@sveltejs/kit' ||
+          dep.depName.startsWith('@sveltejs/adapter-') ||
+          dep.depName.startsWith('@sveltejs/vite-plugin-svelte') ||
           dep.depName === 'svelte' || dep.depName === 'vite'],
       ];
       for (const [groupName, slug, matches] of families) {
@@ -185,12 +187,16 @@ test('ordinary actions, unrelated packages and non-Svelte Vite updates stay outs
     const dep = fixtures.find((candidate) => candidate.depName === name);
     assert.equal((await update(config, dep)).groupName, 'github actions');
   }
-  for (const name of ['redis', 'kindest/node', 'react', '@playwright/mcp']) {
+  for (const name of ['redis', 'kindest/node', 'react', '@playwright/mcp', '@sveltejs/enhanced-img']) {
     const dep = fixtures.find((candidate) => candidate.depName === name);
     assert.notEqual((await update(config, dep)).groupName, 'Node.js');
     assert.notEqual((await update(config, dep)).groupName, 'Playwright');
     assert.notEqual((await update(config, dep)).groupName, 'SvelteKit');
   }
+  const imagePlugin = fixtures.find((dep) => dep.depName === '@sveltejs/enhanced-img');
+  const optionalMajor = await update(config, imagePlugin, 'major');
+  assert.notEqual(optionalMajor.groupName, 'SvelteKit');
+  assert.equal(optionalMajor.dependencyDashboardApproval, true);
   const vite = fixtures.find((dep) => dep.depName === 'vite');
   for (const repository of ['webdev-harke/portfolio', 'lkshrk/omni']) {
     assert.notEqual((await update(config, vite, 'major', repository)).groupName, 'SvelteKit');
