@@ -435,6 +435,31 @@ test('graphql retries a gateway timeout once', async () => {
   assert.equal(calls.length, 2);
 });
 
+const truncatedResponse = (status = 200) => ({
+  ok: true, status, headers: new Headers(), json: async () => { throw new SyntaxError('JSON Parse error: Unterminated string'); },
+});
+
+test('graphql retries a truncated body once, then reports an incomplete response', async () => {
+  const recovered = scriptedFetch([truncatedResponse(), jsonResponse({ data: { viewer: { login: 'me' } } })]);
+  assert.equal(await createGitHubClient({ token: 't', fetchImpl: recovered.fetchImpl }).fetchViewer(), 'me');
+  assert.equal(recovered.calls.length, 2);
+
+  const failed = scriptedFetch([truncatedResponse(), truncatedResponse(), jsonResponse({ data: {} })]);
+  await assert.rejects(
+    createGitHubClient({ token: 't', fetchImpl: failed.fetchImpl }).fetchViewer(),
+    /GitHub GraphQL "viewer" returned an incomplete response/,
+  );
+  assert.equal(failed.calls.length, 2);
+});
+
+test('rest retries a truncated body once', async () => {
+  const responses = [truncatedResponse(), jsonResponse({ workflow_runs: [] })];
+  let calls = 0;
+  const client = createGitHubClient({ token: 't', fetchImpl: async () => { calls++; return responses.shift(); } });
+  assert.deepEqual(await client.rest('action-runs', '/repos/me/app/actions/runs'), { workflow_runs: [] });
+  assert.equal(calls, 2);
+});
+
 test('fetchContributions excludes own owners from the search', async () => {
   const empty = jsonResponse({ data: { search: { nodes: [{}] } } });
   const { calls, fetchImpl } = scriptedFetch([empty, empty]);

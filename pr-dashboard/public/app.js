@@ -168,7 +168,8 @@ function renderSubscriptions() {
     error ? `<p class="subscription-notice" role="status">${esc(error)}${items.length ? ' · Showing previously fetched subscriptions.' : ''}</p>` : '',
     ...(warnings || []).map((warning) => `<p class="subscription-notice">${esc(warning)}</p>`),
     truncated ? '<p class="subscription-notice">Results truncated: only part of your subscriptions could be fetched.</p>' : '',
-    items.length ? `<ul class="rows">${items.map(subscriptionRow).join('')}</ul>` : canUnsubscribe && !error ? emptyState('Nothing on your watchlist.') : '',
+    canUnsubscribe || items.length ? group('Unread', items.filter((item) => item.unread), subscriptionRow, 'Nothing unread.', 'warn') : '',
+    canUnsubscribe || items.length ? group('Watching', items.filter((item) => !item.unread), subscriptionRow, 'Nothing else on your watchlist.') : '',
   ].join('');
 }
 
@@ -266,7 +267,7 @@ function renovateRow(entry) {
   const countTitle = `${green} passing, ${red} failing${other ? `, ${other} running or without CI` : ''}`;
   const counts = entry.open.length
     ? `<span class="${green ? 'n-good' : 'n-zero'}">${green}</span><span class="n-sep">/</span><span class="${red ? 'n-bad' : 'n-zero'}">${red}</span>${other ? `<span class="n-sep">/</span><span class="n-other">${other}</span>` : ''}`
-    : '<span class="n-zero">0</span>';
+    : '';
   const head = `
     <span class="age-badge ${tone}" title="${esc(commitTitle)}">${entry.lastCommit ? ago(entry.lastCommit.committedDate) : 'unknown'}</span>
     <div class="row-main">
@@ -309,7 +310,17 @@ function renderRenovate() {
         <div class="repo-cloud">${untracked.map(ownRepo).join('')}</div></details>`
     : '';
 
-  return `${group('Repositories', repos, renovateRow, 'No repositories with Renovate.')}${onboardingBlock}${untrackedBlock}`;
+  const attention = repos.filter(needsAttention);
+  return [
+    group('Needs attention', attention, renovateRow, 'Every Renovate repository is up to date.', attention.length ? 'warn' : 'calm'),
+    group('Up to date', repos.filter((entry) => !needsAttention(entry)), renovateRow, 'No repository is up to date.'),
+    onboardingBlock,
+    untrackedBlock,
+  ].join('');
+}
+
+function needsAttention(entry) {
+  return isLagging(entry) || Boolean(entry.health && entry.health.severity !== 'ok');
 }
 
 function renderKpis() {
@@ -325,8 +336,10 @@ function renderKpis() {
   const manual = sum((entry) => entry.recentlyMerged.manual);
   const pending = sum((entry) => entry.open.length);
   const autoRate = automerged + manual ? Math.round((automerged / (automerged + manual)) * 100) : null;
-  const lagging = repos.filter(isLagging).length;
   const troubled = repos.filter((entry) => entry.health && entry.health.severity !== 'ok').length;
+  const attentionRepos = repos.filter(needsAttention).length;
+  const watched = data.subscriptions?.items.length ?? 0;
+  const unread = data.subscriptions?.unread ?? 0;
 
   return `
     <div class="kpi ${attention.length ? 'alert' : 'calm'}">
@@ -336,18 +349,18 @@ function renderKpis() {
     </div>
     <div class="kpi ${data.subscriptions?.error || !data.subscriptions?.canUnsubscribe ? 'warn' : 'calm'}">
       <span class="kpi-label">Subscriptions</span>
-      <span class="kpi-value">${data.subscriptions?.items.length ?? 0}</span>
-      <span class="kpi-sub">${data.subscriptions?.unread ?? 0} unread · ${data.subscriptions?.canUnsubscribe ? 'watched' : 'unavailable'}</span>
+      <span class="kpi-value"><span class="${unread ? 'lag' : 'good'}">${unread}</span><span class="of">/</span><span class="total">${watched}</span></span>
+      <span class="kpi-sub">${data.subscriptions?.canUnsubscribe ? 'unread / watched' : 'unavailable'}</span>
     </div>
     <div class="kpi ${failing ? 'alert' : 'calm'}">
       <span class="kpi-label">Failing workflows</span>
       <span class="kpi-value"><span class="${failing ? 'bad' : 'good'}">${failing}</span></span>
       <span class="kpi-sub">${data.workflows.failStreak}× in a row · ${recent} more failed recently</span>
     </div>
-    <div class="kpi ${lagging || troubled ? 'warn' : 'calm'}">
+    <div class="kpi ${troubled ? 'alert' : attentionRepos ? 'warn' : 'calm'}">
       <span class="kpi-label">Renovate</span>
-      <span class="kpi-value"><span class="good">${repos.length - lagging}</span><span class="of">/</span><span class="${lagging ? 'lag' : ''}">${lagging}</span><span class="of">(${pending} open)</span></span>
-      <span class="kpi-sub">up to date / PRs open &gt; ${LAG_DAYS}d${troubled ? ` · <span class="sub-alert">${plural(troubled, 'repo')} with Renovate issues</span>` : ''}${autoRate === null ? '' : ` · ${autoRate}% automerged last ${data.renovate.stats.windowDays}d`}</span>
+      <span class="kpi-value"><span class="${attentionRepos ? 'lag' : 'good'}">${attentionRepos}</span><span class="of">/</span><span class="total">${repos.length}</span></span>
+      <span class="kpi-sub">need attention / repos · ${plural(pending, 'open PR')}${autoRate === null ? '' : ` · ${autoRate}% automerged`}</span>
     </div>`;
 }
 

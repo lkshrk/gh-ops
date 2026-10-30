@@ -220,7 +220,8 @@ test('old hidden owners cannot hide workflows, Renovate rows or counts, and poll
     assert.equal((kpis.match(/class="kpi /g) || []).length, 4);
     assert.match(kpis, /class="bad">2<\/span>/);
     assert.match(kpis, /2 more failed recently/);
-    assert.match(kpis, /class="good">2<\/span>/);
+    assert.match(kpis, /need attention \/ repos/);
+    assert.doesNotMatch(kpis, /sub-alert/);
     assert.equal(ui.document.getElementById('subscriptions').hidden, false);
   }
 });
@@ -245,8 +246,13 @@ test('subscriptions escape text and show type/state/unread, warnings and unavail
   assert.match(ui.document.querySelector('#subscriptions .panel-body').innerHTML, /unavailable/i);
   snapshot.subscriptions = { ...snapshot.subscriptions, canUnsubscribe: true, warnings: [], truncated: false };
   await ui.show(snapshot);
-  assert.match(ui.document.querySelector('#subscriptions .panel-body').innerHTML, /Nothing on your watchlist\./);
-  assert.match(ui.document.getElementById('kpis').innerHTML, /0 unread · watched/);
+  const empty = ui.document.querySelector('#subscriptions .panel-body').innerHTML;
+  assert.match(empty, /<h3>Unread <span class="count">0<\/span><\/h3>/);
+  assert.match(empty, /Nothing unread\./);
+  assert.match(empty, /<h3>Watching <span class="count">0<\/span><\/h3>/);
+  assert.match(empty, /Nothing else on your watchlist\./);
+  assert.match(ui.document.getElementById('kpis').innerHTML, /class="good">0<\/span><span class="of">\/<\/span><span class="total">0<\/span>/);
+  assert.match(ui.document.getElementById('kpis').innerHTML, /unread \/ watched/);
   assert.doesNotMatch(ui.document.getElementById('kpis').innerHTML, /manual subscriptions/);
 });
 
@@ -483,7 +489,9 @@ test('a title click acknowledges with keepalive, never blocks navigation and rea
   const html = ui.document.querySelector('#subscriptions .panel-body').innerHTML;
   assert.match(html, /open thread/);
   assert.equal((html.match(/chip warn">Unread</g) || []).length, 1);
-  assert.match(ui.document.getElementById('kpis').innerHTML, /1 unread/);
+  assert.match(ui.document.getElementById('kpis').innerHTML, /class="lag">1<\/span>/);
+  assert.match(html, /<h3>Unread <span class="count">1<\/span><\/h3>/);
+  assert.match(html, /<h3>Watching <span class="count">1<\/span><\/h3>/);
   const server = fixture();
   server.subscriptions.items = [{ ...openItem, unread: false }, { ...closedItem, unread: false }];
   resolve({ ok: true, json: async () => server });
@@ -565,4 +573,25 @@ test('subscription rows use the standard row markup with a state chip and no tra
   assert.equal((html.match(/<li class="row">/g) || []).length, 2);
   for (const part of ['row-main', 'class="title" href="https://github.com/up/repo/issues/1"', 'class="meta"', 'class="age"', 'chip good">State: Open<', 'chip muted">State: Closed<']) assert.ok(html.includes(part), part);
   assert.doesNotMatch(html, /→|target=/);
+});
+
+test('Renovate splits repositories into attention and up-to-date sections with matching KPI', async () => {
+  const ui = client({ hash: '#renovate' });
+  const snapshot = fixture();
+  const old = new Date(Date.now() - 5 * 86400000).toISOString();
+  const repo = (name, extra) => ({ owner: 'me', name, repo: `me/${name}`, open: [], recentlyMerged: { automerged: 0, manual: 0 }, ...extra });
+  snapshot.renovate.repos = [
+    repo('lagging', { open: [{ title: 'bump', url: 'https://github.com/me/lagging/pull/1', number: 1, ci: 'success', createdAt: old }] }),
+    repo('troubled', { health: { severity: 'error', problems: ['broken'], warnings: [], counts: {} } }),
+    repo('quiet'),
+  ];
+  await ui.show(snapshot);
+  const html = ui.document.querySelector('#renovate .panel-body').innerHTML;
+  assert.match(html, /<div class="group warn">\s*<h3>Needs attention <span class="count">2<\/span><\/h3>/);
+  assert.match(html, /<h3>Up to date <span class="count">1<\/span><\/h3>/);
+  assert.ok(html.indexOf('quiet') > html.indexOf('Up to date'));
+  assert.match(html, /<span class="open-count empty" title="No open pull requests"><\/span>/);
+  const kpis = ui.document.getElementById('kpis').innerHTML;
+  assert.match(kpis, /class="lag">2<\/span><span class="of">\/<\/span><span class="total">3<\/span>/);
+  assert.match(kpis, /need attention \/ repos · 1 open PR\b/);
 });

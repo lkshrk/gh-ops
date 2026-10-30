@@ -195,6 +195,7 @@ h2 { margin: 0; font-size: 16px; }
 }
 
 .group.attention h3 { color: var(--bad); }
+.group.warn h3 { color: var(--warn); }
 
 .count {
   display: inline-block;
@@ -380,14 +381,16 @@ h2 { margin: 0; font-size: 16px; }
   align-items: baseline;
   justify-content: center;
   gap: 4px;
-  min-width: 64px;
-  padding: 4px 8px;
+  align-self: center;
+  min-width: 72px;
+  height: 26px;
+  padding: 0 8px;
   border-radius: 8px;
   border: 1px solid var(--line);
-  font: 600 15px/1.1 var(--mono);
+  font: 600 15px/24px var(--mono);
 }
 
-.open-count.empty { opacity: 0.6; }
+.open-count.empty { border-color: transparent; }
 .n-good { color: var(--good); }
 .n-bad { color: var(--bad); }
 .n-other { color: var(--warn); }
@@ -436,12 +439,13 @@ details[open] > summary .chevron::before { transform: rotate(45deg); }
 .sub-row.health a { text-decoration: underline; }
 .sub-alert { color: var(--bad); }
 
-.more { border-top: 1px solid var(--line); }
-
 .more summary {
-  padding: 10px 16px;
+  padding: 12px 16px 6px;
   color: var(--muted);
-  font-size: 12.5px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
   cursor: pointer;
 }
 

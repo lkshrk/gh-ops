@@ -217,12 +217,29 @@ function createGitHubClient({
     const started = Date.now();
     const init = { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ query, variables }) };
 
-    let response = await send(operation, GRAPHQL_URL, init);
+    let response;
+    let payload;
     let retried = false;
-    if (RETRYABLE_STATUSES.has(response.status)) {
-      logger.debug('retrying GitHub request', { operation, ...responseMeta(response) });
-      retried = true;
+    for (;;) {
       response = await send(operation, GRAPHQL_URL, init);
+      if (RETRYABLE_STATUSES.has(response.status) && !retried) {
+        logger.debug('retrying GitHub request', { operation, ...responseMeta(response) });
+        retried = true;
+        continue;
+      }
+      if (!response.ok) break;
+      try {
+        payload = await response.json();
+        break;
+      } catch (error) {
+        if (retried) {
+          throw new GitHubError(`GitHub GraphQL "${operation}" returned an incomplete response`, {
+            operation, variables, retried, durationMs: Date.now() - started, ...track(response),
+          }, error);
+        }
+        logger.debug('retrying incomplete GitHub response', { operation, ...responseMeta(response) });
+        retried = true;
+      }
     }
 
     const meta = track(response);
@@ -236,7 +253,6 @@ function createGitHubClient({
       });
     }
 
-    const payload = await response.json();
     const graphqlErrors = (payload.errors || []).map(({ type, message, path }) => ({ type, message, path }));
 
     if (graphqlErrors.length && !payload.data) {
@@ -268,11 +284,27 @@ function createGitHubClient({
       ...(cached?.lastModified ? { 'If-Modified-Since': cached.lastModified } : {}),
     } };
 
-    let response = await send(operation, `${API_URL}${path}`, init);
+    let response;
+    let body;
     let retried = false;
-    if (RETRYABLE_STATUSES.has(response.status)) {
-      retried = true;
+    for (;;) {
       response = await send(operation, `${API_URL}${path}`, init);
+      if (RETRYABLE_STATUSES.has(response.status) && !retried) {
+        retried = true;
+        continue;
+      }
+      if (!response.ok || response.status === 304) break;
+      try {
+        body = await response.json();
+        break;
+      } catch (error) {
+        if (retried) {
+          throw new GitHubError(`GitHub REST "${operation}" returned an incomplete response`, {
+            operation, path, retried, durationMs: Date.now() - started, ...track(response),
+          }, error);
+        }
+        retried = true;
+      }
     }
 
     const meta = track(response);
@@ -294,7 +326,6 @@ function createGitHubClient({
       });
     }
 
-    const body = await response.json();
     const etag = response.headers.get('etag');
     const entry = {
       body, etag, lastModified: response.headers.get('last-modified'),
