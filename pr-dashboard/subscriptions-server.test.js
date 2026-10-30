@@ -74,6 +74,16 @@ test('unknown subscription rows survive old closure and cannot be unsubscribed',
   expect(mutations).toBe(0);
 });
 
+test('authored rows without a notification thread are shown but cannot be unsubscribed', async () => {
+  const authored = { ...row, id: null, authored: true, unread: false };
+  let mutations = 0;
+  const h = harness(() => ({ fetchSubscriptions: async () => result([authored]), unsubscribe: async () => { mutations++; } }));
+  await h.controller.refresh({}); h.rebuild();
+  expect(h.snapshot().subscriptions.items).toEqual([authored]);
+  expect((await h.controller.unsubscribe(request())).status).toBe(404);
+  expect(mutations).toBe(0);
+});
+
 test('request guards and current visible URL membership reject unsafe mutations', async () => {
   let mutations = 0;
   const hidden = { ...row, id: '43', url: `${row.url}0`, state: 'CLOSED', closedAt: '2020-01-01T00:00:00Z' };

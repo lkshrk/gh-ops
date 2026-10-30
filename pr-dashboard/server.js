@@ -139,7 +139,7 @@ async function refresh() {
     const contributions = await searchClient.fetchContributions({ viewer, excludeOwners: owners, closedSince });
 
     phase = 'subscriptions';
-    await subscriptions.refresh({ excludeOwners: owners, stateClient: searchClient });
+    await subscriptions.refresh({ excludeOwners: owners, stateClient: searchClient, viewer });
 
     phase = 'build';
     lastBuild = { viewer, repos, ...contributions, options, now: new Date(), ownerErrors: ownerErrors() };

@@ -189,7 +189,7 @@ test('old hidden owners cannot hide workflows, Renovate rows or counts, and poll
   const ui = client({ hash: '#subscriptions', hiddenOwners: ['me', 'org'] });
   const snapshot = fixture();
   snapshot.owners = ['me', 'org'];
-  snapshot.subscriptions.items = [{ title: 'subscription', subscribed: true, unread: true }];
+  snapshot.subscriptions.items = [{ title: 'subscription', id: '1', subscribed: true, unread: true }];
   snapshot.subscriptions.unread = 1;
   snapshot.contributions.closed = [{ title: 'closed', state: 'CLOSED', reasons: [] }];
   for (const owner of snapshot.owners) {
@@ -230,8 +230,8 @@ test('subscriptions escape text and show type/state/unread, warnings and unavail
   const snapshot = fixture();
   snapshot.subscriptions = { ...snapshot.subscriptions, canUnsubscribe: false, error: '<error>', warnings: ['<lookup>'], truncated: true, hidden: 2,
     items: [
-      { url: 'https://github.com/up/repo/issues/1', repo: '<repo>', title: '<title>', type: 'Issue', state: 'OPEN', unread: true, subscribed: true, updatedAt: new Date().toISOString() },
-      { title: 'PR', type: 'PullRequest', state: 'MERGED', subscribed: true },
+      { url: 'https://github.com/up/repo/issues/1', repo: '<repo>', title: '<title>', type: 'Issue', state: 'OPEN', unread: true, id: '1', subscribed: true, updatedAt: new Date().toISOString() },
+      { title: 'PR', type: 'PullRequest', state: 'MERGED', id: '1', subscribed: true },
       { title: 'Discussion', type: 'Discussion', state: null, subscribed: null },
     ] };
   await ui.show(snapshot);
@@ -242,6 +242,20 @@ test('subscriptions escape text and show type/state/unread, warnings and unavail
   snapshot.subscriptions = { ...snapshot.subscriptions, error: null, items: [] };
   await ui.show(snapshot);
   assert.match(ui.document.querySelector('#subscriptions .panel-body').innerHTML, /unavailable/i);
+});
+
+test('authored subscriptions are labelled and offer Unsubscribe only with a notification thread', async () => {
+  const ui = client();
+  const snapshot = fixture();
+  snapshot.subscriptions.items = [
+    { title: 'with thread', url: 'https://github.com/up/repo/issues/1', type: 'Issue', state: 'OPEN', authored: true, id: '1', subscribed: true },
+    { title: 'search only', url: 'https://github.com/up/repo/discussions/2', type: 'Discussion', state: 'OPEN', authored: true, id: null, subscribed: true },
+  ];
+  await ui.show(snapshot);
+  const html = ui.document.querySelector('#subscriptions .panel-body').innerHTML;
+  assert.equal((html.match(/Opened by you/g) || []).length, 2);
+  assert.equal((html.match(/class="unsubscribe"/g) || []).length, 1);
+  assert.match(html, /data-url="https:\/\/github.com\/up\/repo\/issues\/1"/);
 });
 
 test('unsubscribe posts once, disables immediately, renders success and preserves selection', async () => {
@@ -268,7 +282,7 @@ test('unsubscribe posts once, disables immediately, renders success and preserve
 test('discovery error retains stale rows without controls and recovery restores controls', async () => {
   const ui = client();
   const snapshot = fixture();
-  snapshot.subscriptions.items = [{ title: 'retained thread', subscribed: true }];
+  snapshot.subscriptions.items = [{ title: 'retained thread', id: '1', subscribed: true }];
   for (const error of [null, 'notifications denied', null]) {
     snapshot.subscriptions.error = error;
     snapshot.subscriptions.canUnsubscribe = !error;
@@ -287,7 +301,7 @@ for (const actions of [['unsubscribe', 'unsubscribe'], ['setDone', 'unsubscribe'
   test(`mutations serialize through response application: ${actions.join(' then ')}`, async () => {
     const initial = fixture();
     initial.subscriptions.items = [1, 2].map((number) => ({
-      title: `thread ${number}`, url: `https://github.com/up/repo/issues/${number}`, subscribed: true,
+      title: `thread ${number}`, url: `https://github.com/up/repo/issues/${number}`, id: '1', subscribed: true,
     }));
     initial.contributions.attention = [{ title: 'PR', url: 'https://github.com/up/repo/pull/3', state: 'OPEN', reasons: ['ci-failing'] }];
     let current = structuredClone(initial);
@@ -362,7 +376,7 @@ test('a poll cannot re-enable a pending unsubscribe or allow a second mutation',
   let resolve;
   const ui = client({ request: () => new Promise((done) => { resolve = done; }) });
   const snapshot = fixture();
-  snapshot.subscriptions.items = [{ title: 'thread', url: 'https://github.com/up/repo/issues/1', subscribed: true }];
+  snapshot.subscriptions.items = [{ title: 'thread', url: 'https://github.com/up/repo/issues/1', id: '1', subscribed: true }];
   await ui.show(snapshot);
   const button = { disabled: false, dataset: { url: snapshot.subscriptions.items[0].url } };
   const pending = ui.context.unsubscribe(button);
@@ -408,7 +422,7 @@ test('a delayed pre-unsubscribe poll cannot restore a removed row or overwrite t
     fresh.repoCount = 2;
     const ui = client({ request: async () => ({ ok: true, json: async () => fresh }) });
     const old = fixture();
-    old.subscriptions.items = [{ title: 'removed thread', url: 'https://github.com/up/repo/issues/1', subscribed: true }];
+    old.subscriptions.items = [{ title: 'removed thread', url: 'https://github.com/up/repo/issues/1', id: '1', subscribed: true }];
     await ui.show(old);
     let release;
     const delayed = new Promise((resolve) => { release = resolve; });

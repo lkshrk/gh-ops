@@ -40,7 +40,7 @@ export function createSubscriptionsController({ createClient, rebuild, respond, 
     const body = await request.json().catch(() => null);
     if (typeof body?.url !== 'string') return json(400, { error: 'expected {"url": string}' });
     if (!snapshot().canUnsubscribe) return json(503, { error: 'notifications unavailable' });
-    const thread = snapshot().items.find((item) => item.url === body.url && item.subscribed === true);
+    const thread = snapshot().items.find((item) => item.url === body.url && item.subscribed === true && item.id);
     if (!thread) return json(404, { error: 'no eligible subscription with that url' });
 
     try {

@@ -8,8 +8,9 @@ Live, single-page dashboard over everything you maintain or contribute to on Git
    *Needs you* pull request moves it to *Open* until a human other than you comments, reviews or
    opens a review thread on it again; then it returns to *Needs you* and the flag is dropped.
 2. **Subscriptions**: manually subscribed issues, pull requests and discussions outside your
-   configured owners, discovered through GitHub notifications. Shows unread and unknown-state
-   badges, recent closures, and an **Unsubscribe** action for confirmed subscriptions.
+   configured owners, discovered through GitHub notifications, plus open issues and discussions
+   you opened there. Shows unread, unknown-state and *Opened by you* badges, recent closures, and
+   an **Unsubscribe** action for confirmed subscriptions.
 3. **Failing workflows**: default-branch GitHub Actions workflows across your own and your
    organizations' repositories whose latest `FAIL_STREAK` runs all failed, with a run strip and
    the date the streak started. Workflows with a shorter red streak sit in a collapsed list.
@@ -90,12 +91,17 @@ supplies this variable.
 ### Subscription discovery and Unsubscribe
 
 - Discovery requests `/notifications?all=true&participating=true&per_page=100`, including read
-  notifications, then keeps only `reason: manual` issues, pull requests and discussions outside
-  owners configured in `GITHUB_TOKENS`. Mentions, assignments, repository watching and other
-  notification reasons do not qualify. This is notification-based discovery, **not an inventory
-  of every historical subscription**: a subscription without an available matching notification
-  cannot be found. If GitHub relabels a manually subscribed thread's notification from `manual`
-  to `mention`, its existing row disappears on the next successful discovery.
+  notifications, then keeps only `reason: manual` issues, pull requests and discussions, and
+  `reason: author` issues and discussions, outside owners configured in `GITHUB_TOKENS`.
+  Mentions, assignments, repository watching and other notification reasons do not qualify;
+  authored pull requests belong to Contributions. This is notification-based discovery, **not an
+  inventory of every historical subscription**: a subscription without an available matching
+  notification cannot be found. If GitHub relabels a manually subscribed thread's notification
+  from `manual` to `mention`, its existing row disappears on the next successful discovery.
+- Open issues and discussions you authored outside those owners are also found by search with
+  the viewer token (up to **50** of each, truncation reported), skipping subjects you
+  unsubscribed from or ignore. Rows found only this way have no notification thread, so they
+  show no Unsubscribe button and leave the list once closed.
 - Each distinct subject's thread subscription is checked. Unsubscribed, ignored and `404`
   subscriptions are omitted. Failed or inconclusive checks remain visible as **Unknown
   subscription**, with warnings and no Unsubscribe button.
@@ -162,7 +168,7 @@ enough context to act on without reproducing:
 | `/` | Dashboard |
 | `/data.json` | Latest snapshot; `503` until the first refresh succeeds |
 | `POST /contributions/done` | `{"url": "<pull request url>", "done": true\|false}`; returns the updated snapshot. Only same-origin `application/json` requests are accepted |
-| `POST /subscriptions/unsubscribe` | `{"url": "<visible subject url>"}`; returns the updated snapshot after GitHub succeeds. Requires `application/json`; rejects a supplied `Sec-Fetch-Site` other than `same-origin`. Only a currently visible, confirmed subscription is eligible; arbitrary URLs/thread IDs are not accepted. Missing token: `503`; ineligible URL: `404`; upstream failure: `502`. |
+| `POST /subscriptions/unsubscribe` | `{"url": "<visible subject url>"}`; returns the updated snapshot after GitHub succeeds. Requires `application/json`; rejects a supplied `Sec-Fetch-Site` other than `same-origin`. Only a currently visible, confirmed subscription with a notification thread is eligible; arbitrary URLs/thread IDs are not accepted. Missing token: `503`; ineligible URL: `404`; upstream failure: `502`. |
 | `/healthz` | Liveness; `bun pr-dashboard/healthcheck.js` probes it from inside the distroless image |
 
 ## Development

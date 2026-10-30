@@ -38,7 +38,7 @@ test('follows short Link pages; filters manual external supported subjects and d
   });
   const result = await c.fetchSubscriptions({ excludeOwners: ['me'], stateClient: stateClient({ repo2: { closed: true, closedAt: '2026-10-25T00:00:00Z' } }) });
   expect(result.threads.map((t) => t.id)).toEqual(['1', '2', '3']);
-  expect(result.threads[0]).toEqual({ id: '1', url: 'https://github.com/other/project/issues/1', repo: 'other/project', owner: 'other', number: 1, title: 'Subject 1', type: 'Issue', unread: true, updatedAt: '2026-10-26T00:00:00Z', subscribed: true, state: 'OPEN', closedAt: null, mergedAt: null });
+  expect(result.threads[0]).toEqual({ id: '1', url: 'https://github.com/other/project/issues/1', repo: 'other/project', owner: 'other', number: 1, title: 'Subject 1', type: 'Issue', authored: false, unread: true, updatedAt: '2026-10-26T00:00:00Z', subscribed: true, state: 'OPEN', closedAt: null, mergedAt: null });
   expect(result.threads[2].state).toBe('CLOSED');
   expect(result.warnings).toEqual([]);
   expect(result.truncated).toBe(false);
@@ -266,4 +266,79 @@ test('summary hides only closures strictly older than seven days and counts visi
   expect(result.unread).toBe(3);
   expect(result.hidden).toBe(2);
   expect(rows).toHaveLength(8);
+});
+
+const authoredNode = (repo, number, viewerSubscription = 'SUBSCRIBED') => ({
+  number, title: `Authored ${number}`, updatedAt: '2026-10-27T00:00:00Z', viewerSubscription, repository: { nameWithOwner: repo },
+});
+const authoredClient = (data, seen = []) => createGitHubClient({ token: 'test-viewer', fetchImpl: async (_url, init) => {
+  const { query, variables } = JSON.parse(init.body);
+  if (!query.includes('search(')) return json({ data: await stateClient().graphql('subscription-subjects', query) });
+  seen.push(variables);
+  if (data instanceof Error) return json({ message: data.message }, 502);
+  return json({ data });
+} });
+
+test('author-reason notifications for issues and discussions are tracked, authored pull requests are not', async () => {
+  const c = client(async (url) => {
+    if (url.includes('/subscription')) return json({ subscribed: true });
+    return json([
+      notification(1, 'Issue', { reason: 'author' }), notification(2, 'Discussion', { reason: 'author' }),
+      notification(3, 'PullRequest', { reason: 'author' }), notification(4),
+    ]);
+  });
+  const result = await c.fetchSubscriptions({ stateClient: stateClient() });
+  expect(result.threads.map(({ id, authored }) => [id, authored])).toEqual([['1', true], ['2', true], ['4', false]]);
+});
+
+test('authored open issues and discussions are added once, skipping unsubscribed, ignored and own-owner subjects', async () => {
+  const c = client(async (url) => {
+    if (url.endsWith('/threads/7/subscription')) return json({ subscribed: false });
+    if (url.includes('/subscription')) return json({ subscribed: true });
+    return json([notification(5, 'Issue', { reason: 'author' }), notification(7, 'Issue', { reason: 'author' })]);
+  });
+  const seen = [];
+  const viewerClient = authoredClient({
+    issues: { issueCount: 5, nodes: [
+      authoredNode('other/project', 5), authoredNode('other/project', 7), authoredNode('upstream/tool', 8),
+      authoredNode('upstream/tool', 9, 'UNSUBSCRIBED'), authoredNode('ME/project', 10),
+    ] },
+    discussions: { discussionCount: 3, nodes: [
+      authoredNode('upstream/tool', 11, null), authoredNode('upstream/tool', 12, 'IGNORED'), {},
+    ] },
+  }, seen);
+  const result = await c.fetchSubscriptions({ excludeOwners: ['me'], stateClient: viewerClient, viewer: 'octo' });
+  expect(seen).toEqual([{
+    issues: 'is:issue archived:false author:octo is:open -user:me',
+    discussions: 'author:octo is:open -user:me',
+  }]);
+  expect(result.threads.map(({ id, url }) => [id, url])).toEqual([
+    ['5', 'https://github.com/other/project/issues/5'],
+    [null, 'https://github.com/upstream/tool/issues/8'],
+    [null, 'https://github.com/upstream/tool/discussions/11'],
+  ]);
+  expect(result.threads[1]).toEqual({
+    id: null, url: 'https://github.com/upstream/tool/issues/8', repo: 'upstream/tool', owner: 'upstream', number: 8,
+    title: 'Authored 8', type: 'Issue', authored: true, unread: false, updatedAt: '2026-10-27T00:00:00Z',
+    subscribed: true, state: 'OPEN', closedAt: null, mergedAt: null,
+  });
+  expect(result.threads[2].subscribed).toBeNull();
+  expect(result.warnings).toEqual([]);
+  expect(result.truncated).toBe(false);
+});
+
+test('authored discovery reports truncation and degrades to a warning on failure', async () => {
+  const feed = () => client(async (url) => url.includes('/subscription') ? json({ subscribed: true }) : json([notification(1)]));
+  const many = { issues: { issueCount: 51, nodes: [] }, discussions: { discussionCount: 0, nodes: [] } };
+  const truncated = await feed().fetchSubscriptions({ stateClient: authoredClient(many), viewer: 'octo' });
+  expect(truncated.truncated).toBe(true);
+  expect(truncated.warnings).toEqual(['Authored issue and discussion discovery truncated at 50 each.']);
+
+  const failed = await feed().fetchSubscriptions({ stateClient: authoredClient(new Error('boom')), viewer: 'octo' });
+  expect(failed.threads.map(({ id }) => id)).toEqual(['1']);
+  expect(failed.warnings).toHaveLength(1);
+  expect(failed.warnings[0]).toStartWith('Authored issues and discussions unavailable:');
+
+  const missing = await feed().fetchSubscriptions({ viewer: 'octo' });
+  expect(missing.warnings.at(-1)).toBe('Authored issues and discussions unavailable: Viewer state client unavailable');
 });

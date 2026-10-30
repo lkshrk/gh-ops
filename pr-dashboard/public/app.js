@@ -150,10 +150,10 @@ function subscriptionRow(item) {
       <a class="title" href="${esc(item.url)}">${esc(item.title)}</a>
       <div class="meta"><span class="upstream">${esc(item.repo)}</span><span class="num">#${esc(item.number)}</span>
         ${chip(type, 'muted')}${chip(state, item.state === 'MERGED' ? 'merged' : item.state === 'OPEN' ? 'good' : 'muted')}
-        ${item.unread ? chip('Unread', 'warn') : ''}${item.subscribed == null ? chip('Unknown subscription', 'warn') : ''}
+        ${item.authored ? chip('Opened by you', 'muted') : ''}${item.unread ? chip('Unread', 'warn') : ''}${item.subscribed == null ? chip('Unknown subscription', 'warn') : ''}
       </div>
     </div>
-    ${data.subscriptions.canUnsubscribe && item.subscribed === true ? `<button type="button" class="unsubscribe" data-url="${esc(item.url)}" aria-label="Unsubscribe from ${esc(item.title)}"${pendingUnsubscribes.has(item.url) ? ' disabled' : ''}>Unsubscribe</button>` : ''}
+    ${data.subscriptions.canUnsubscribe && item.subscribed === true && item.id ? `<button type="button" class="unsubscribe" data-url="${esc(item.url)}" aria-label="Unsubscribe from ${esc(item.title)}"${pendingUnsubscribes.has(item.url) ? ' disabled' : ''}>Unsubscribe</button>` : ''}
     <span class="age">${when(item.updatedAt)}</span>
   </li>`;
 }

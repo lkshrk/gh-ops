@@ -7,6 +7,7 @@ const RECENT_RUNS = 100;
 const REPO_BATCH_SIZE = 6;
 const SUBSCRIPTION_LIMIT = 30;
 const NOTIFICATION_PAGE_LIMIT = 10;
+const AUTHORED_LIMIT = 50;
 const RETRYABLE_STATUSES = new Set([502, 503, 504]);
 
 const RENOVATE_CONFIG_FILES = [
@@ -115,6 +116,21 @@ const CLOSED_CONTRIBUTIONS_QUERY = `
   query ($q: String!) {
     search(type: ISSUE, query: $q, first: 30) {
       nodes { ... on PullRequest { ${PULL_REQUEST_FIELDS} } }
+    }
+  }
+`;
+
+const AUTHORED_SUBJECT_FIELDS = 'number title updatedAt viewerSubscription repository { nameWithOwner }';
+
+const AUTHORED_QUERY = `
+  query ($issues: String!, $discussions: String!) {
+    issues: search(type: ISSUE, query: $issues, first: ${AUTHORED_LIMIT}) {
+      issueCount
+      nodes { ... on Issue { ${AUTHORED_SUBJECT_FIELDS} } }
+    }
+    discussions: search(type: DISCUSSION, query: $discussions, first: ${AUTHORED_LIMIT}) {
+      discussionCount
+      nodes { ... on Discussion { ${AUTHORED_SUBJECT_FIELDS} } }
     }
   }
 `;
@@ -289,7 +305,7 @@ function createGitHubClient({
     return notificationPage ? entry : body;
   }
 
-  async function fetchSubscriptions({ excludeOwners = [], stateClient } = {}) {
+  async function fetchSubscriptions({ excludeOwners = [], stateClient, viewer } = {}) {
     const warnings = [];
     const excluded = new Set(excludeOwners.map((owner) => owner.toLowerCase()));
     const candidates = new Map();
@@ -303,7 +319,8 @@ function createGitHubClient({
       const response = await rest('notifications', path, { notificationPage: true });
       for (const thread of response.body) {
         const { subject, repository } = thread;
-        if (thread.reason !== 'manual' || !['Issue', 'PullRequest', 'Discussion'].includes(subject?.type)) continue;
+        const authored = thread.reason === 'author' && subject?.type !== 'PullRequest';
+        if ((thread.reason !== 'manual' && !authored) || !['Issue', 'PullRequest', 'Discussion'].includes(subject?.type)) continue;
         const repo = repository?.full_name;
         const [owner, name] = (repo || '').split('/');
         if (excluded.has(owner?.toLowerCase())) continue;
@@ -319,7 +336,7 @@ function createGitHubClient({
         if (candidates.size === SUBSCRIPTION_LIMIT) { truncated = true; break; }
         candidates.set(key, {
           id: String(thread.id), url: `https://github.com/${owner}/${name}/${kind === 'pulls' ? 'pull' : kind}/${match[4]}`,
-          repo, owner, number: Number(match[4]), title: subject.title, type: subject.type,
+          repo, owner, number: Number(match[4]), title: subject.title, type: subject.type, authored,
           unread: Boolean(thread.unread), updatedAt: thread.updated_at,
           subscribed: null, state: null, closedAt: null, mergedAt: null,
         });
@@ -378,6 +395,42 @@ function createGitHubClient({
         thread.mergedAt = subject?.mergedAt || null;
         if (!thread.state) warnings.push(`Subject state unknown for ${thread.repo}#${thread.number}.`);
       });
+    }
+
+    if (viewer) {
+      const scope = [`author:${viewer}`, 'is:open', ...excludeOwners.map((owner) => `-user:${owner}`)].join(' ');
+      try {
+        if (!stateClient) throw new Error('Viewer state client unavailable');
+        // Discussion search returns nothing at all when given archived:false.
+        const data = await stateClient.graphql('authored-subjects', AUTHORED_QUERY, { issues: `is:issue archived:false ${scope}`, discussions: scope });
+        if (data.issues.issueCount > AUTHORED_LIMIT || data.discussions.discussionCount > AUTHORED_LIMIT) {
+          truncated = true;
+          warnings.push(`Authored issue and discussion discovery truncated at ${AUTHORED_LIMIT} each.`);
+        }
+        const subjects = [
+          ...data.issues.nodes.map((node) => ({ ...node, type: 'Issue', kind: 'issues' })),
+          ...data.discussions.nodes.map((node) => ({ ...node, type: 'Discussion', kind: 'discussions' })),
+        ];
+        for (const subject of subjects) {
+          const repo = subject.repository?.nameWithOwner;
+          const [owner, name] = (repo || '').split('/');
+          if (!owner || !name || !Number.isSafeInteger(subject.number) || excluded.has(owner.toLowerCase())) continue;
+          if (subject.viewerSubscription === 'UNSUBSCRIBED' || subject.viewerSubscription === 'IGNORED') continue;
+          // Keys of dropped (unsubscribed) notification threads stay in candidates, so they are not re-added here.
+          const key = `${repo.toLowerCase()}/${subject.kind}/${subject.number}`;
+          if (candidates.has(key)) continue;
+          candidates.set(key, null);
+          threads.push({
+            id: null, url: `https://github.com/${owner}/${name}/${subject.kind}/${subject.number}`,
+            repo, owner, number: subject.number, title: subject.title, type: subject.type, authored: true,
+            unread: false, updatedAt: subject.updatedAt,
+            subscribed: subject.viewerSubscription === 'SUBSCRIBED' ? true : null,
+            state: 'OPEN', closedAt: null, mergedAt: null,
+          });
+        }
+      } catch (error) {
+        warnings.push(`Authored issues and discussions unavailable: ${error.message}`);
+      }
     }
     return { threads, warnings, truncated };
   }
