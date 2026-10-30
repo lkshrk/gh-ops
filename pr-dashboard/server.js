@@ -2,7 +2,7 @@ import path from 'node:path';
 import { buildSnapshot, isDoneValid } from './dashboard.js';
 import { createGitHubClient, parseOwnerTokens } from './github.js';
 import { createLogger } from './log.js';
-import { createDoneStore } from './store.js';
+import { createDashboardStore } from './store.js';
 import { createSubscriptionsController } from './subscriptions-server.js';
 
 const logger = createLogger({ level: process.env.LOG_LEVEL || 'info' });
@@ -36,7 +36,7 @@ try {
   process.exit(1);
 }
 const owners = Object.keys(clients);
-const doneStore = createDoneStore({ file: process.env.STATE_FILE || null, logger });
+const dashboardStore = createDashboardStore({ file: process.env.STATE_FILE || null, logger });
 
 const publicDir = path.join(import.meta.dir, 'public');
 const assets = {
@@ -184,7 +184,7 @@ async function refresh() {
 
 function rebuildSnapshot() {
   const { ownerErrors: errors, ...input } = lastBuild;
-  snapshot = { ...buildSnapshot({ ...input, done: doneStore.all(), subscriptions: subscriptions.snapshot() }), ownerErrors: errors };
+  snapshot = { ...buildSnapshot({ ...input, done: dashboardStore.doneAll(), subscriptions: subscriptions.snapshot() }), ownerErrors: errors };
 }
 
 function openContributions() {
@@ -194,7 +194,7 @@ function openContributions() {
 function pruneDoneFlags() {
   const byUrl = new Map(openContributions().map((pr) => [pr.url, pr]));
   try {
-    doneStore.retain((url, entry) => byUrl.has(url) && isDoneValid(byUrl.get(url), entry));
+    dashboardStore.retainDone((url, entry) => byUrl.has(url) && isDoneValid(byUrl.get(url), entry));
   } catch (error) {
     logger.error('could not prune done flags', { file: process.env.STATE_FILE, error });
   }
@@ -224,8 +224,8 @@ async function markDone(request) {
   const pullRequest = openContributions().find((pr) => pr.url === body.url);
   if (!pullRequest) return json(404, { error: 'no open contribution with that url' });
 
-  if (body.done) doneStore.set(body.url, { feedbackAt: pullRequest.feedbackAt, markedAt: new Date().toISOString() });
-  else doneStore.delete(body.url);
+  if (body.done) dashboardStore.setDone(body.url, { feedbackAt: pullRequest.feedbackAt, markedAt: new Date().toISOString() });
+  else dashboardStore.deleteDone(body.url);
   rebuildSnapshot();
   return dataResponse();
 }

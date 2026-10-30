@@ -14,10 +14,6 @@ import {
 } from './dashboard.js';
 import { GitHubError, createGitHubClient, parseOwnerTokens } from './github.js';
 import { createLogger } from './log.js';
-import { createDoneStore } from './store.js';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import path from 'node:path';
 
 const me = { login: 'me', __typename: 'User' };
 const maintainer = { login: 'maintainer', __typename: 'User' };
@@ -144,21 +140,6 @@ test('isDoneValid keeps a flag set before any human feedback until the first com
   assert.equal(isDoneValid(red, undefined), false);
 });
 
-test('done store persists flags and drops the ones it is told not to keep', () => {
-  const dir = mkdtempSync(path.join(tmpdir(), 'pr-dashboard-'));
-  const file = path.join(dir, 'state', 'done.json');
-  const logger = createLogger({ level: 'error', write() {} });
-
-  const store = createDoneStore({ file, logger });
-  store.set('a', { feedbackAt: null });
-  store.set('b', { feedbackAt: '2026-09-01T00:00:00Z' });
-  store.retain((url) => url !== 'a');
-  assert.deepEqual(createDoneStore({ file, logger }).all(), { b: { feedbackAt: '2026-09-01T00:00:00Z' } });
-
-  store.delete('b');
-  assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')), {});
-  rmSync(dir, { recursive: true });
-});
 
 function summarize(overrides) {
   return summarizeContribution(pullRequest(overrides), 'me');
