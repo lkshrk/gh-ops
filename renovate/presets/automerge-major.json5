@@ -1,0 +1,11 @@
+{
+  $schema: "https://docs.renovatebot.com/renovate-schema.json",
+  description: "Automerge major updates, GitHub Actions included, once required checks pass; extend after the base preset",
+  packageRules: [
+    {
+      matchUpdateTypes: ["major"],
+      dependencyDashboardApproval: false,
+      automerge: true,
+    },
+  ],
+}
