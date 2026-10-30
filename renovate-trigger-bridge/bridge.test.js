@@ -35,6 +35,102 @@ function forwardOptions(overrides = {}) {
   };
 }
 
+function successfulRenovateCheckSuite() {
+  return {
+    action: 'completed',
+    repository: { id: 123, full_name: 'webdev-harke/portfolio' },
+    check_suite: {
+      conclusion: 'success',
+      app: { slug: 'github-actions' },
+      head_branch: 'renovate/bun-1.x',
+      head_sha: 'current-head',
+      pull_requests: [{
+        number: 42,
+        head: { ref: 'renovate/bun-1.x', sha: 'current-head', repo: { id: 123 } },
+      }],
+    },
+  };
+}
+
+test('triggers Renovate when GitHub Actions succeeds on an associated Renovate PR head', () => {
+  assert.deepEqual(resolveTrigger('check_suite', successfulRenovateCheckSuite()), {
+    shouldTrigger: true,
+    repository: 'webdev-harke/portfolio',
+    reason: 'check_suite.completed on renovate/bun-1.x',
+  });
+});
+
+test('ignores check suites that have not successfully completed', () => {
+  for (const action of ['requested', 'rerequested']) {
+    const payload = successfulRenovateCheckSuite();
+    payload.action = action;
+    assert.equal(resolveTrigger('check_suite', payload).shouldTrigger, false, action);
+  }
+
+  for (const conclusion of [null, 'failure', 'cancelled', 'neutral', 'skipped', 'timed_out']) {
+    const payload = successfulRenovateCheckSuite();
+    payload.check_suite.conclusion = conclusion;
+    assert.equal(resolveTrigger('check_suite', payload).shouldTrigger, false, String(conclusion));
+  }
+
+  const payload = successfulRenovateCheckSuite();
+  delete payload.check_suite;
+  assert.equal(resolveTrigger('check_suite', payload).shouldTrigger, false);
+});
+
+test('ignores successful check suites from other apps', () => {
+  for (const app of [undefined, { slug: 'another-app' }]) {
+    const payload = successfulRenovateCheckSuite();
+    payload.check_suite.app = app;
+    assert.equal(resolveTrigger('check_suite', payload).shouldTrigger, false);
+  }
+});
+
+test('ignores main and non-Renovate branch suites so bot runs cannot trigger themselves', () => {
+  for (const branch of [null, 'main', 'feature/update']) {
+    const payload = successfulRenovateCheckSuite();
+    payload.check_suite.head_branch = branch;
+    assert.equal(resolveTrigger('check_suite', payload).shouldTrigger, false, String(branch));
+  }
+});
+
+test('ignores check suites without an associated pull request', () => {
+  for (const pullRequests of [undefined, []]) {
+    const payload = successfulRenovateCheckSuite();
+    payload.check_suite.pull_requests = pullRequests;
+    assert.equal(resolveTrigger('check_suite', payload).shouldTrigger, false);
+  }
+});
+
+test('ignores forked pull requests and mismatched PR heads', () => {
+  for (const head of [
+    { ref: 'renovate/bun-1.x', sha: 'current-head', repo: { id: 999 } },
+    { ref: 'renovate/bun-1.x', sha: 'old-head', repo: { id: 123 } },
+    { ref: 'renovate/other', sha: 'current-head', repo: { id: 123 } },
+    {},
+  ]) {
+    const payload = successfulRenovateCheckSuite();
+    payload.check_suite.pull_requests[0].head = head;
+    assert.equal(resolveTrigger('check_suite', payload).shouldTrigger, false);
+  }
+});
+
+test('requires repository identity and a head SHA before dispatching a completed suite', () => {
+  const missingId = successfulRenovateCheckSuite();
+  delete missingId.repository.id;
+  delete missingId.check_suite.pull_requests[0].head.repo.id;
+  assert.equal(resolveTrigger('check_suite', missingId).shouldTrigger, false);
+
+  const missingSha = successfulRenovateCheckSuite();
+  delete missingSha.check_suite.head_sha;
+  delete missingSha.check_suite.pull_requests[0].head.sha;
+  assert.equal(resolveTrigger('check_suite', missingSha).shouldTrigger, false);
+
+  const missingRepository = successfulRenovateCheckSuite();
+  delete missingRepository.repository;
+  assert.equal(resolveTrigger('check_suite', missingRepository).shouldTrigger, false);
+});
+
 test('detects checked Renovate trigger checkboxes', () => {
   assert.equal(hasRenovateTriggerCheckbox('- [x] run renovate'), true);
   assert.equal(hasRenovateTriggerCheckbox('- [X] trigger renovate'), true);
