@@ -311,9 +311,11 @@ function renderRenovate() {
     : '';
 
   const by = (status) => repos.filter((entry) => prStatus(entry) === status);
+  const problems = by('problems');
   const failing = by('failing');
   const pending = by('pending');
   return [
+    group('Renovate problems', problems, renovateRow, 'No Renovate config or branch problems.', problems.length ? 'attention' : 'calm'),
     group('Failing CI', failing, renovateRow, 'No Renovate PR is failing CI.', failing.length ? 'attention' : 'calm'),
     group('Pending', pending, renovateRow, 'No Renovate PR is waiting on CI.', pending.length ? 'warn' : ''),
     group('All green', by('green'), renovateRow, 'No repository has only green Renovate PRs.'),
@@ -324,6 +326,7 @@ function renderRenovate() {
 }
 
 function prStatus(entry) {
+  if (entry.health && entry.health.severity !== 'ok') return 'problems';
   if (!entry.open.length) return 'none';
   if (entry.open.some((pr) => pr.ci === 'failure')) return 'failing';
   if (entry.open.some((pr) => pr.ci !== 'success')) return 'pending';
@@ -339,11 +342,9 @@ function renderKpis() {
 
   const repos = data.renovate.repos;
   const sum = (pick) => repos.reduce((total, entry) => total + pick(entry), 0);
-  const automerged = sum((entry) => entry.recentlyMerged.automerged);
-  const manual = sum((entry) => entry.recentlyMerged.manual);
-  const autoRate = automerged + manual ? Math.round((automerged / (automerged + manual)) * 100) : null;
   const failingRepos = repos.filter((entry) => prStatus(entry) === 'failing').length;
   const withPrs = repos.filter((entry) => entry.open.length).length;
+  const problemRepos = repos.filter((entry) => prStatus(entry) === 'problems').length;
   const openPrs = sum((entry) => entry.open.length);
   const watched = data.subscriptions?.items.length ?? 0;
   const unread = data.subscriptions?.unread ?? 0;
@@ -364,10 +365,10 @@ function renderKpis() {
       <span class="kpi-value"><span class="${failing ? 'bad' : 'good'}">${failing}</span></span>
       <span class="kpi-sub">${data.workflows.failStreak}× in a row · ${recent} more failed recently</span>
     </div>
-    <div class="kpi ${failingRepos ? 'alert' : 'calm'}">
+    <div class="kpi ${failingRepos || problemRepos ? 'alert' : 'calm'}">
       <span class="kpi-label">Renovate</span>
       <span class="kpi-value"><span class="${failingRepos ? 'bad' : 'good'}">${failingRepos}</span><span class="of">/</span><span class="total">${withPrs}</span></span>
-      <span class="kpi-sub">failing CI / with open PRs · ${plural(openPrs, 'open PR')}${autoRate === null ? '' : ` · ${autoRate}% automerged`}</span>
+      <span class="kpi-sub">failing CI / with open PRs · ${plural(openPrs, 'open PR')}${problemRepos ? ` · <span class="sub-alert">${problemRepos} with problems</span>` : ''}</span>
     </div>`;
 }
 
