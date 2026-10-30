@@ -342,3 +342,104 @@ test('authored discovery reports truncation and degrades to a warning on failure
   const missing = await feed().fetchSubscriptions({ viewer: 'octo' });
   expect(missing.warnings.at(-1)).toBe('Authored issues and discussions unavailable: Viewer state client unavailable');
 });
+
+const tracked = (repo, number, type = 'Issue') => ({ url: `https://github.com/${repo}/${type === 'Issue' ? 'issues' : 'discussions'}/${number}`, owner: repo.split('/')[0], repo, type, number });
+const trackedClient = (resolve, queries = []) => createGitHubClient({ token: 'test-viewer', fetchImpl: async (_url, init) => {
+  const { query } = JSON.parse(init.body);
+  queries.push(query);
+  const data = {};
+  for (const m of query.matchAll(/(repo\d+): repository\(owner: ("[^"]*"), name: ("[^"]*")\) \{ subject: (issue|discussion)\(number: (\d+)\)/g)) {
+    data[m[1]] = resolve(`${JSON.parse(m[2])}/${JSON.parse(m[3])}`, Number(m[5]), m[4]);
+  }
+  return json({ data });
+} });
+const unknownSubject = { title: null, updatedAt: null, state: null, closedAt: null, subscribed: null };
+
+test('tracked subjects are looked up in batches with per-type fields', async () => {
+  const queries = [];
+  const entries = Array.from({ length: 7 }, (_, i) => tracked('up/stream', i + 1, i % 2 ? 'Discussion' : 'Issue'));
+  const c = trackedClient(() => ({ subject: { title: 't', updatedAt: '2026-10-01T00:00:00Z', state: 'OPEN', closed: false, closedAt: null, viewerSubscription: 'SUBSCRIBED' } }), queries);
+  const result = await c.fetchTrackedSubjects(entries);
+  expect(queries).toHaveLength(2);
+  expect(queries[0]).toContain('issue(number: 1) { title updatedAt state closedAt viewerSubscription }');
+  expect(queries[0]).toContain('discussion(number: 2) { title updatedAt closed closedAt viewerSubscription }');
+  expect(queries[1]).toContain('repo0:');
+  expect(result.subjects.size).toBe(7);
+  expect(result.warnings).toEqual([]);
+});
+
+test('tracked subjects normalise state and subscription for issues and discussions', async () => {
+  const entries = [tracked('a/b', 1), tracked('a/b', 2), tracked('a/b', 3, 'Discussion'), tracked('a/b', 4, 'Discussion'), tracked('a/b', 5), tracked('a/b', 6)];
+  const nodes = {
+    1: { state: 'OPEN', viewerSubscription: 'SUBSCRIBED' },
+    2: { state: 'CLOSED', closedAt: '2026-10-02T00:00:00Z', viewerSubscription: 'UNSUBSCRIBED' },
+    3: { closed: false, viewerSubscription: 'IGNORED' },
+    4: { closed: true, closedAt: '2026-10-03T00:00:00Z', viewerSubscription: 'SUBSCRIBED' },
+    5: { state: 'OPEN', viewerSubscription: 'SOMETHING_ELSE' },
+    6: { state: 'OPEN' },
+  };
+  const c = trackedClient((_repo, number) => ({ subject: { title: `T${number}`, updatedAt: '2026-10-01T00:00:00Z', closedAt: null, ...nodes[number] } }));
+  const { subjects } = await c.fetchTrackedSubjects(entries);
+  const view = (n, type) => subjects.get(tracked('a/b', n, type).url);
+  expect([view(1).state, view(1).subscribed]).toEqual(['OPEN', true]);
+  expect([view(2).state, view(2).subscribed, view(2).closedAt]).toEqual(['CLOSED', false, '2026-10-02T00:00:00Z']);
+  expect([view(3, 'Discussion').state, view(3, 'Discussion').subscribed]).toEqual(['OPEN', false]);
+  expect([view(4, 'Discussion').state, view(4, 'Discussion').subscribed]).toEqual(['CLOSED', true]);
+  expect(view(5).subscribed).toBeNull();
+  expect(view(6).subscribed).toBeNull();
+  expect(view(1)).toMatchObject({ title: 'T1', updatedAt: '2026-10-01T00:00:00Z' });
+});
+
+test('tracked subjects that come back null stay in the map as unknown with a warning', async () => {
+  const entries = [tracked('a/b', 1), tracked('gone/repo', 2)];
+  const c = trackedClient((repo) => (repo === 'a/b' ? { subject: null } : null));
+  const { subjects, warnings } = await c.fetchTrackedSubjects(entries);
+  expect(subjects.get(entries[0].url)).toEqual(unknownSubject);
+  expect(subjects.get(entries[1].url)).toEqual(unknownSubject);
+  expect(warnings).toHaveLength(2);
+  expect(warnings[0]).toContain('a/b#1');
+  expect(warnings[1]).toContain('gone/repo#2');
+});
+
+test('invalid tracked entries are skipped with a warning and never queried', async () => {
+  const queries = [];
+  const good = tracked('a/b', 1);
+  const entries = [
+    good, tracked('a/b', 0), tracked('a/b', 1.5), tracked('a/b', 2, 'PullRequest'),
+    { ...tracked('a/b', 3), owner: 'a"b' }, { ...tracked('x/y"z', 4), owner: 'x' },
+  ];
+  const c = trackedClient(() => ({ subject: { title: 't', updatedAt: null, state: 'OPEN', closedAt: null } }), queries);
+  const { subjects, warnings } = await c.fetchTrackedSubjects(entries);
+  expect([...subjects.keys()]).toEqual([good.url]);
+  expect(warnings).toHaveLength(5);
+  expect(queries).toHaveLength(1);
+  expect(queries[0]).not.toContain('PullRequest');
+  expect(queries[0].match(/repository\(/g)).toHaveLength(1);
+});
+
+test('a failing tracked batch keeps its entries unknown and other batches continue', async () => {
+  let calls = 0;
+  const c = createGitHubClient({ token: 'test-viewer', fetchImpl: async (_url, init) => {
+    calls += 1;
+    if (calls === 1) return json({ message: 'boom' }, 400);
+    const { query } = JSON.parse(init.body);
+    const data = {};
+    for (const m of query.matchAll(/(repo\d+): repository/g)) data[m[1]] = { subject: { title: 'ok', updatedAt: null, state: 'OPEN', closedAt: null } };
+    return json({ data });
+  } });
+  const entries = Array.from({ length: 7 }, (_, i) => tracked('a/b', i + 1));
+  const { subjects, warnings } = await c.fetchTrackedSubjects(entries);
+  expect(subjects.size).toBe(7);
+  expect(subjects.get(entries[0].url)).toEqual(unknownSubject);
+  expect(subjects.get(entries[6].url).title).toBe('ok');
+  expect(warnings).toHaveLength(1);
+});
+
+test('empty tracked input makes no request', async () => {
+  let calls = 0;
+  const c = createGitHubClient({ token: 'test-viewer', fetchImpl: async () => { calls += 1; return json({ data: {} }); } });
+  const result = await c.fetchTrackedSubjects([]);
+  expect(result.subjects.size).toBe(0);
+  expect(result.warnings).toEqual([]);
+  expect(calls).toBe(0);
+});

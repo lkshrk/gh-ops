@@ -534,7 +534,59 @@ function createGitHubClient({
     return [...rateLimits.values()].sort((a, b) => a.remaining / a.limit - b.remaining / b.limit)[0] || null;
   }
 
-  return { fetchContributions, fetchOwnerRepos, fetchViewer, fetchSubscriptions, unsubscribe, graphql, rest, rateLimit: lowestRateLimit };
+  async function fetchTrackedSubjects(entries) {
+    const subjects = new Map();
+    const warnings = [];
+    const unknown = () => ({ title: null, updatedAt: null, state: null, closedAt: null, subscribed: null });
+    const valid = [];
+    for (const entry of entries || []) {
+      const [owner, name, ...rest] = String(entry?.repo ?? '').split('/');
+      const label = `${entry?.repo}#${entry?.number}`;
+      if (!/^[\w.-]+$/.test(owner || '') || !/^[\w.-]+$/.test(name || '') || rest.length
+        || !/^[\w.-]+$/.test(String(entry.owner ?? '')) || !['Issue', 'Discussion'].includes(entry.type)
+        || !Number.isSafeInteger(entry.number) || entry.number <= 0) {
+        warnings.push(`Skipped invalid tracked entry ${label}.`);
+        continue;
+      }
+      valid.push({ entry, owner, name, label });
+    }
+
+    for (let start = 0; start < valid.length; start += REPO_BATCH_SIZE) {
+      const batch = valid.slice(start, start + REPO_BATCH_SIZE);
+      const fields = batch.map(({ entry, owner, name }, i) => {
+        const [field, selection] = entry.type === 'Discussion'
+          ? ['discussion', 'title updatedAt closed closedAt viewerSubscription']
+          : ['issue', 'title updatedAt state closedAt viewerSubscription'];
+        return `repo${i}: repository(owner: ${JSON.stringify(owner)}, name: ${JSON.stringify(name)}) { subject: ${field}(number: ${entry.number}) { ${selection} } }`;
+      });
+      let data;
+      try {
+        data = await graphql('tracked-subjects', `query { ${fields.join('\n')} }`);
+      } catch (error) {
+        warnings.push(`Tracked subjects unavailable: ${error.message}`);
+      }
+      batch.forEach(({ entry, label }, i) => {
+        const subject = data?.[`repo${i}`]?.subject;
+        if (!subject) {
+          subjects.set(entry.url, unknown());
+          if (data) warnings.push(`Tracked subject ${label} not found or inaccessible.`);
+          return;
+        }
+        let state = null;
+        if (entry.type === 'Discussion') {
+          if (typeof subject.closed === 'boolean') state = subject.closed ? 'CLOSED' : 'OPEN';
+        } else if (subject.state === 'OPEN' || subject.state === 'CLOSED') {
+          state = subject.state;
+        }
+        const subscribed = subject.viewerSubscription === 'SUBSCRIBED' ? true
+          : (subject.viewerSubscription === 'UNSUBSCRIBED' || subject.viewerSubscription === 'IGNORED' ? false : null);
+        subjects.set(entry.url, { title: subject.title ?? null, updatedAt: subject.updatedAt ?? null, state, closedAt: subject.closedAt ?? null, subscribed });
+      });
+    }
+    return { subjects, warnings };
+  }
+
+  return { fetchContributions, fetchOwnerRepos, fetchViewer, fetchSubscriptions, fetchTrackedSubjects, unsubscribe, graphql, rest, rateLimit: lowestRateLimit };
 }
 
 function parseOwnerTokens(raw) {
