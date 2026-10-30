@@ -543,7 +543,7 @@ function createGitHubClient({
       const [owner, name, ...rest] = String(entry?.repo ?? '').split('/');
       const label = `${entry?.repo}#${entry?.number}`;
       if (!/^[\w.-]+$/.test(owner || '') || !/^[\w.-]+$/.test(name || '') || rest.length
-        || !/^[\w.-]+$/.test(String(entry.owner ?? '')) || !['Issue', 'Discussion'].includes(entry.type)
+        || String(entry.owner ?? '').toLowerCase() !== owner.toLowerCase() || !['Issue', 'Discussion'].includes(entry.type)
         || !Number.isSafeInteger(entry.number) || entry.number <= 0) {
         warnings.push(`Skipped invalid tracked entry ${label}.`);
         continue;
@@ -569,7 +569,7 @@ function createGitHubClient({
         const subject = data?.[`repo${i}`]?.subject;
         if (!subject) {
           subjects.set(entry.url, unknown());
-          if (data) warnings.push(`Tracked subject ${label} not found or inaccessible.`);
+          if (data) warnings.push(`Tracked subject ${label} unavailable.`);
           return;
         }
         let state = null;

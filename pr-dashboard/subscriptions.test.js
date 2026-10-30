@@ -363,7 +363,9 @@ test('tracked subjects are looked up in batches with per-type fields', async () 
   expect(queries).toHaveLength(2);
   expect(queries[0]).toContain('issue(number: 1) { title updatedAt state closedAt viewerSubscription }');
   expect(queries[0]).toContain('discussion(number: 2) { title updatedAt closed closedAt viewerSubscription }');
-  expect(queries[1]).toContain('repo0:');
+  expect(queries[0]).toContain('repo5:');
+  expect(queries[0]).not.toContain('repo6:');
+  expect(queries[1].match(/repository\(/g)).toHaveLength(1);
   expect(result.subjects.size).toBe(7);
   expect(result.warnings).toEqual([]);
 });
@@ -397,8 +399,7 @@ test('tracked subjects that come back null stay in the map as unknown with a war
   expect(subjects.get(entries[0].url)).toEqual(unknownSubject);
   expect(subjects.get(entries[1].url)).toEqual(unknownSubject);
   expect(warnings).toHaveLength(2);
-  expect(warnings[0]).toContain('a/b#1');
-  expect(warnings[1]).toContain('gone/repo#2');
+  expect(warnings).toEqual(['Tracked subject a/b#1 unavailable.', 'Tracked subject gone/repo#2 unavailable.']);
 });
 
 test('invalid tracked entries are skipped with a warning and never queried', async () => {
@@ -408,10 +409,12 @@ test('invalid tracked entries are skipped with a warning and never queried', asy
     good, tracked('a/b', 0), tracked('a/b', 1.5), tracked('a/b', 2, 'PullRequest'),
     { ...tracked('a/b', 3), owner: 'a"b' }, { ...tracked('x/y"z', 4), owner: 'x' },
   ];
+  const labels = ['a/b#0', 'a/b#1.5', 'a/b#2', 'a/b#3', 'x/y"z#4'];
   const c = trackedClient(() => ({ subject: { title: 't', updatedAt: null, state: 'OPEN', closedAt: null } }), queries);
   const { subjects, warnings } = await c.fetchTrackedSubjects(entries);
   expect([...subjects.keys()]).toEqual([good.url]);
   expect(warnings).toHaveLength(5);
+  labels.forEach((label, i) => expect(warnings[i]).toContain(label));
   expect(queries).toHaveLength(1);
   expect(queries[0]).not.toContain('PullRequest');
   expect(queries[0].match(/repository\(/g)).toHaveLength(1);
@@ -430,9 +433,10 @@ test('a failing tracked batch keeps its entries unknown and other batches contin
   const entries = Array.from({ length: 7 }, (_, i) => tracked('a/b', i + 1));
   const { subjects, warnings } = await c.fetchTrackedSubjects(entries);
   expect(subjects.size).toBe(7);
-  expect(subjects.get(entries[0].url)).toEqual(unknownSubject);
+  entries.slice(0, 6).forEach((entry) => expect(subjects.get(entry.url)).toEqual(unknownSubject));
   expect(subjects.get(entries[6].url).title).toBe('ok');
   expect(warnings).toHaveLength(1);
+  expect(warnings[0]).toContain('400');
 });
 
 test('empty tracked input makes no request', async () => {
@@ -442,4 +446,24 @@ test('empty tracked input makes no request', async () => {
   expect(result.subjects.size).toBe(0);
   expect(result.warnings).toEqual([]);
   expect(calls).toBe(0);
+});
+
+test('tracked entries whose owner differs from the repo owner are skipped, case-insensitively otherwise accepted', async () => {
+  const mismatch = { ...tracked('a/b', 1), owner: 'other' };
+  const sameCase = { ...tracked('A/b', 2), owner: 'a' };
+  const queries = [];
+  const c = trackedClient(() => ({ subject: { title: 't', updatedAt: null, state: 'OPEN', closedAt: null } }), queries);
+  const { subjects, warnings } = await c.fetchTrackedSubjects([mismatch, sameCase]);
+  expect([...subjects.keys()]).toEqual([sameCase.url]);
+  expect(warnings).toHaveLength(1);
+  expect(warnings[0]).toContain('a/b#1');
+  expect(queries[0].match(/repository\(/g)).toHaveLength(1);
+});
+
+test('a tracked alias that is null alongside GraphQL errors stays unknown without throwing', async () => {
+  const entry = tracked('a/b', 1);
+  const c = createGitHubClient({ token: 'test-viewer', fetchImpl: async () => json({ data: { repo0: null }, errors: [{ message: 'x' }] }) });
+  const { subjects, warnings } = await c.fetchTrackedSubjects([entry]);
+  expect(subjects.get(entry.url)).toEqual(unknownSubject);
+  expect(warnings).toEqual(['Tracked subject a/b#1 unavailable.']);
 });
