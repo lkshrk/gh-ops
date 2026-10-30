@@ -5,6 +5,7 @@
     ":dependencyDashboard",
     ":semanticCommits",
     "schedule:earlyMondays",
+    "github>lkshrk/gh-ops//renovate/presets/groups.json5",
   ],
   minimumReleaseAge: "48 hours",
   rangeStrategy: "replace",
@@ -17,13 +18,6 @@
     "prIgnoreNotification",
   ],
   packageRules: [
-    {
-      description: "Keep the Node.js runtime aligned across CI and Docker",
-      matchDatasources: ["node-version", "docker"],
-      matchDepNames: ["node"],
-      groupName: "Node.js",
-      groupSlug: "nodejs",
-    },
     {
       matchUpdateTypes: ["patch", "minor", "pin", "digest"],
       automerge: true,
@@ -38,6 +32,32 @@
       enabled: false,
     },
   ],
+  npm: {
+    ignorePaths: [
+      "**/node_modules/**",
+      "**/bower_components/**",
+      "**/vendor/**",
+      "**/examples/**",
+      "**/__tests__/**",
+      "**/test/**",
+      "*/**/tests/**",
+      "tests/*/**",
+      "**/__fixtures__/**",
+    ],
+  },
+  bun: {
+    ignorePaths: [
+      "**/node_modules/**",
+      "**/bower_components/**",
+      "**/vendor/**",
+      "**/examples/**",
+      "**/__tests__/**",
+      "**/test/**",
+      "*/**/tests/**",
+      "tests/*/**",
+      "**/__fixtures__/**",
+    ],
+  },
   lockFileMaintenance: {
     enabled: true,
     automerge: true,

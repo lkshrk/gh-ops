@@ -1,6 +1,9 @@
 {
   $schema: "https://docs.renovatebot.com/renovate-schema.json",
   description: "GitHub Actions and runner images: update any time, group non-majors, open majors as PRs",
+  extends: [
+    "github>lkshrk/gh-ops//renovate/presets/groups.json5",
+  ],
   customManagers: [
     {
       customType: "regex",
@@ -25,7 +28,22 @@
     {
       matchFileNames: [".github/workflows/**", ".github/actions/**"],
       matchUpdateTypes: ["minor", "patch", "digest", "pin", "pinDigest"],
-      matchDatasources: ["!node-version"],
+      matchPackageNames: [
+        "!node",
+        "!actions/node-versions",
+        "!docker.io/node",
+        "!docker.io/library/node",
+        "!index.docker.io/library/node",
+        "!bun",
+        "!oven/bun",
+        "!docker.io/oven/bun",
+        "!@playwright/test",
+        "!playwright",
+        "!playwright-core",
+        "!@playwright/browser-*",
+        "!@playwright/experimental-ct-*",
+        "!mcr.microsoft.com/playwright",
+      ],
       groupName: "github actions",
     },
     {
