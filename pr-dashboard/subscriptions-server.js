@@ -27,7 +27,7 @@ export function createSubscriptionsController({ createClient, watchStore, rebuil
       if (version !== generation) return;
       const surviving = (entries) => discovered.threads.filter((thread) => !(thread.url in before) || thread.url in entries);
       const draft = { ...watchStore.watchlistAll() };
-      mergeDiscovered(draft, surviving(draft));
+      mergeDiscovered(draft, surviving(draft), new Date());
       const targets = Object.values(draft).filter((entry) => !entry.removedAt);
       let tracked = { subjects: new Map(), warnings: [] };
       if (options?.stateClient?.fetchTrackedSubjects && targets.length) {
@@ -42,7 +42,7 @@ export function createSubscriptionsController({ createClient, watchStore, rebuil
       // Synchronous from here: re-read the store.
       const entries = { ...watchStore.watchlistAll() };
       const now = new Date();
-      const added = mergeDiscovered(entries, surviving(entries));
+      const added = mergeDiscovered(entries, surviving(entries), now);
       applyTracked(entries, tracked.subjects);
       settleAdded(entries, added);
       prune(entries, now);

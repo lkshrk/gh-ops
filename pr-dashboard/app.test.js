@@ -505,6 +505,41 @@ test('a title click on a closed row removes it optimistically, and middle-click 
   assert.equal(ui.calls.filter((call) => call.url === 'subscriptions/acknowledge').length, 2);
 });
 
+test('a late acknowledge response does not bring back a removed row', async () => {
+  const pending = {};
+  const ui = client({ request: (url) => new Promise((done) => { pending[url] = done; }) });
+  const snapshot = fixture();
+  snapshot.subscriptions.items = [openItem, closedItem];
+  snapshot.subscriptions.unread = 2;
+  const removed = fixture();
+  removed.subscriptions.items = [closedItem];
+  await ui.show(snapshot);
+  const removal = ui.context.removeWatched({ disabled: false, dataset: { url: openItem.url } });
+  ui.events.click(titleEvent(openItem).event);
+  await new Promise((done) => setImmediate(done));
+  pending['subscriptions/remove']({ ok: true, json: async () => removed });
+  await removal;
+  assert.doesNotMatch(ui.document.querySelector('#subscriptions .panel-body').innerHTML, /open thread/);
+  pending['subscriptions/acknowledge']({ ok: true, json: async () => snapshot });
+  await new Promise((done) => setImmediate(done));
+  await new Promise((done) => setImmediate(done));
+  assert.doesNotMatch(ui.document.querySelector('#subscriptions .panel-body').innerHTML, /open thread/);
+});
+
+test('an in-flight poll does not undo the optimistic acknowledge repaint', async () => {
+  const stale = fixture();
+  stale.subscriptions.items = [openItem];
+  stale.subscriptions.unread = 1;
+  let releasePoll;
+  const ui = client({ request: () => new Promise(() => {}), pollResponse: new Promise((done) => { releasePoll = done; }) });
+  await ui.show(stale);
+  const polling = ui.context.poll();
+  ui.events.click(titleEvent(openItem).event);
+  releasePoll({ ok: true, json: async () => stale });
+  await polling;
+  assert.equal((ui.document.querySelector('#subscriptions .panel-body').innerHTML.match(/Unread</g) || []).length, 0);
+});
+
 test('a failed acknowledgement stays silent', async () => {
   const ui = client({ request: async () => ({ ok: false, json: async () => ({ error: 'denied' }) }) });
   const snapshot = fixture();

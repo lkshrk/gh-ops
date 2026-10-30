@@ -471,6 +471,16 @@ async function removeWatched(button) {
 
 function acknowledgeOpened(link) {
   const url = link.getAttribute('href');
+  const items = data?.subscriptions?.items;
+  const item = items?.find((candidate) => candidate.url === url);
+  if (item && (item.unread || item.state === 'CLOSED' || item.state === 'MERGED')) {
+    const closed = item.state === 'CLOSED' || item.state === 'MERGED';
+    const next = closed ? items.filter((candidate) => candidate !== item) : items.map((candidate) => (candidate === item ? { ...item, unread: false } : candidate));
+    data = { ...data, subscriptions: { ...data.subscriptions, items: next, unread: next.filter((candidate) => candidate.unread).length } };
+    mutationVersion++;
+    render();
+  }
+  const version = mutationVersion;
   const request = fetch('subscriptions/acknowledge', {
     method: 'POST',
     keepalive: true,
@@ -478,16 +488,9 @@ function acknowledgeOpened(link) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ url }),
   });
-  const items = data?.subscriptions?.items;
-  const item = items?.find((candidate) => candidate.url === url);
-  if (item && (item.unread || item.state === 'CLOSED' || item.state === 'MERGED')) {
-    const closed = item.state === 'CLOSED' || item.state === 'MERGED';
-    const next = closed ? items.filter((candidate) => candidate !== item) : items.map((candidate) => (candidate === item ? { ...item, unread: false } : candidate));
-    data = { ...data, subscriptions: { ...data.subscriptions, items: next, unread: next.filter((candidate) => candidate.unread).length } };
-    render();
-  }
   const settled = request.then((response) => (response.ok && response.type !== 'opaqueredirect' ? response : Promise.reject(new Error('not acknowledged'))));
-  mutationQueue = mutationQueue.then(() => load(settled, true)).catch(() => {});
+  settled.catch(() => {});
+  mutationQueue = mutationQueue.then(() => (version === mutationVersion ? load(settled, true) : undefined)).catch(() => {});
 }
 
 document.addEventListener('click', (event) => {

@@ -291,7 +291,7 @@ h2 { margin: 0; font-size: 16px; }
 .done-toggle.undo { color: var(--muted); font-weight: 500; }
 .done-toggle.undo:hover { background: var(--panel-2); border-color: var(--muted); color: var(--text); }
 .done-toggle:disabled { opacity: 0.5; cursor: progress; }
-.remove { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 24px; padding: 0; color: var(--muted); }
+.remove { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; padding: 0; color: var(--muted); }
 .remove svg { display: block; }
 .remove:hover { background: var(--panel-2); border-color: var(--muted); color: var(--text); }
 .remove:disabled { opacity: 0.5; cursor: progress; }

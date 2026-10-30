@@ -58,7 +58,7 @@ function revives(entry, thread) {
   return Boolean(thread.id) && thread.authored === false && time(entry.removedAt) !== null && isAfter(thread.updatedAt, entry.removedAt);
 }
 
-function mergeDiscovered(entries, threads) {
+function mergeDiscovered(entries, threads, now) {
   const added = [];
   for (const thread of threads || []) {
     if (!thread?.url || thread.type === 'PullRequest') continue;
@@ -69,7 +69,9 @@ function mergeDiscovered(entries, threads) {
     } else if (!entry.removedAt) {
       entries[thread.url] = refreshed(entry, thread);
     } else if (revives(entry, thread)) {
-      entries[thread.url] = refreshed({ ...entry, removedAt: null, seenUpdatedAt: latest(entry.seenUpdatedAt, entry.removedAt) }, thread);
+      entries[thread.url] = refreshed({ ...entry, removedAt: null, lastSeenAt: null, seenUpdatedAt: latest(entry.seenUpdatedAt, entry.removedAt) }, thread);
+    } else {
+      entries[thread.url] = { ...entry, lastSeenAt: now.toISOString() };
     }
   }
   return added;
@@ -102,7 +104,7 @@ function prune(entries, now) {
   const cutoff = now.getTime() - TOMBSTONE_TTL_MS;
   for (const [url, entry] of Object.entries(entries)) {
     const drop = entry.removedAt
-      ? (time(entry.removedAt) ?? -Infinity) < cutoff
+      ? (time(latest(entry.lastSeenAt, entry.removedAt)) ?? -Infinity) < cutoff
       : entry.subscribed === false || (isClosed(entry) && !isUnread(entry));
     if (drop) delete entries[url];
   }
