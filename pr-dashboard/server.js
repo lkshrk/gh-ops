@@ -234,7 +234,8 @@ async function markDone(request) {
 function route(request) {
   const { pathname } = new URL(request.url);
 
-  if (pathname === '/subscriptions/unsubscribe') return subscriptions.unsubscribe(request);
+  if (pathname === '/subscriptions/acknowledge') return subscriptions.acknowledge(request);
+  if (pathname === '/subscriptions/remove') return subscriptions.remove(request);
   if (pathname === '/contributions/done') {
     return request.method === 'POST' ? markDone(request) : json(405, { error: 'method not allowed' });
   }

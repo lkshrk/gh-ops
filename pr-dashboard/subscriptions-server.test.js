@@ -10,7 +10,7 @@ const visible = ({ id, url, repo, owner, number, title, type, state, authored, u
   id, url, repo, owner, number, title, type, state, authored: Boolean(authored), unread, subscribed, updatedAt, closedAt, mergedAt: null,
 });
 const result = (threads = [row]) => ({ threads, warnings: [], truncated: false });
-const request = (body = { url: row.url }, headers = {}, method = 'POST') => new Request('http://dashboard/subscriptions/unsubscribe', {
+const request = (body = { url: row.url }, headers = {}, method = 'POST') => new Request('http://dashboard/subscriptions/remove', {
   method, headers: { 'content-type': 'application/json', 'sec-fetch-site': 'same-origin', ...headers },
   ...(method === 'GET' ? {} : { body: typeof body === 'string' ? body : JSON.stringify(body) }),
 });
@@ -33,7 +33,8 @@ test('missing notifications credentials produce an empty unavailable section wit
   expect(h.snapshot().viewer).toBe('me');
   expect(h.snapshot().contributions).toEqual({ attention: [], open: [], closed: [] });
   expect(h.snapshot().subscriptions).toEqual({ items: [], unread: 0, hidden: 0, warnings: [], truncated: false, error: null, canUnsubscribe: false });
-  expect((await h.controller.unsubscribe(request())).status).toBe(503);
+  expect((await h.controller.remove(request())).status).toBe(404);
+  expect((await h.controller.acknowledge(request())).status).toBe(404);
 });
 
 test('discovery failures stay in subscriptions, retain previous rows, and recover independently', async () => {
@@ -53,7 +54,6 @@ test('discovery failures stay in subscriptions, retain previous rows, and recove
   await refresh();
   expect(h.snapshot().subscriptions.error).toBe('notifications denied');
   expect(h.snapshot().subscriptions.items).toEqual([visible(row)]);
-  expect((await h.controller.unsubscribe(request())).status).toBe(503);
   expect(mutations).toBe(0);
   expect(h.snapshot().subscriptions.canUnsubscribe).toBe(false);
   expect(h.snapshot().subscriptions.warnings).toEqual(['partial discovery']);
@@ -64,29 +64,44 @@ test('discovery failures stay in subscriptions, retain previous rows, and recove
   await refresh();
   expect(h.snapshot().subscriptions.error).toBeNull();
   expect(h.snapshot().subscriptions.canUnsubscribe).toBe(true);
-  expect((await h.controller.unsubscribe(request())).status).toBe(200);
+  expect((await h.controller.remove(request())).status).toBe(200);
   expect(mutations).toBe(1);
 });
 
-test('closed unread rows with unknown subscription stay visible and cannot be unsubscribed', async () => {
+test('a row stays removable locally while discovery is failing, without a GitHub call', async () => {
+  let fail = false;
+  let mutations = 0;
+  const h = harness(() => ({ fetchSubscriptions: async () => { if (fail) throw new Error('notifications denied'); return result(); }, unsubscribe: async () => { mutations++; } }));
+  await h.controller.refresh({}); h.rebuild();
+  fail = true;
+  await h.controller.refresh({}); h.rebuild();
+  expect(h.snapshot().subscriptions.canUnsubscribe).toBe(false);
+  expect((await h.controller.remove(request())).status).toBe(200);
+  expect(mutations).toBe(0);
+  expect(h.snapshot().subscriptions.items).toEqual([]);
+});
+
+test('closed unread rows with unknown subscription stay visible and are removed without a GitHub call', async () => {
   const unknown = { ...row, subscribed: null, state: 'CLOSED', closedAt: '2020-01-01T00:00:00Z' };
   let mutations = 0;
   const h = harness(() => ({ fetchSubscriptions: async () => result([unknown]), unsubscribe: async () => { mutations++; } }));
   await h.controller.refresh({}); h.rebuild();
   expect(h.snapshot().subscriptions.items).toEqual([visible(unknown)]);
   expect(h.snapshot().subscriptions.unread).toBe(1);
-  expect((await h.controller.unsubscribe(request())).status).toBe(404);
+  expect((await h.controller.remove(request())).status).toBe(200);
   expect(mutations).toBe(0);
+  expect(h.snapshot().subscriptions.items).toEqual([]);
 });
 
-test('authored rows without a notification thread are shown but cannot be unsubscribed', async () => {
+test('authored rows without a notification thread are removed locally with no GitHub call', async () => {
   const authored = { ...row, id: null, authored: true, unread: false };
   let mutations = 0;
   const h = harness(() => ({ fetchSubscriptions: async () => result([authored]), unsubscribe: async () => { mutations++; } }));
   await h.controller.refresh({}); h.rebuild();
   expect(h.snapshot().subscriptions.items).toEqual([visible(authored)]);
-  expect((await h.controller.unsubscribe(request())).status).toBe(404);
+  expect((await h.controller.remove(request())).status).toBe(200);
   expect(mutations).toBe(0);
+  expect(h.snapshot().subscriptions.items).toEqual([]);
 });
 
 test('request guards and current visible URL membership reject unsafe mutations', async () => {
@@ -94,7 +109,7 @@ test('request guards and current visible URL membership reject unsafe mutations'
   const hidden = { ...row, id: '43', url: `${row.url}0`, unread: false, state: 'CLOSED', closedAt: '2020-01-01T00:00:00Z' };
   const h = harness(() => ({ fetchSubscriptions: async () => result([row, hidden]), unsubscribe: async () => { mutations++; } }));
   await h.controller.refresh({}); h.rebuild();
-  for (const [req, status] of [
+  for (const endpoint of ['acknowledge', 'remove']) for (const [req, status] of [
     [request({}, {}, 'GET'), 405],
     [request(undefined, { 'content-type': 'text/plain' }), 415],
     [request(undefined, { 'sec-fetch-site': 'cross-site' }), 403],
@@ -102,13 +117,13 @@ test('request guards and current visible URL membership reject unsafe mutations'
     [request('{'), 400], [request({ url: 42 }), 400],
     [request({ url: 'https://github.com/unknown/repo/issues/1', id: '42' }), 404],
     [request({ url: hidden.url }), 404],
-  ]) expect((await h.controller.unsubscribe(req)).status).toBe(status);
+  ]) expect((await h.controller[endpoint](req)).status).toBe(status);
   expect(mutations).toBe(0);
   expect(h.snapshot().subscriptions.items.map(({ url }) => url)).toEqual([row.url]);
   expect(h.snapshot().subscriptions.hidden).toBe(0);
 });
 
-test('failed DELETE retains the row; success removes it immediately and returns the full snapshot', async () => {
+test('failed DELETE retains the row and store; success removes it immediately and returns the full snapshot', async () => {
   let fail = true;
   const ids = [];
   const h = harness(() => ({ fetchSubscriptions: async () => result(), unsubscribe: async (id) => {
@@ -116,10 +131,12 @@ test('failed DELETE retains the row; success removes it immediately and returns 
     if (fail) throw new Error('DELETE denied');
   } }));
   await h.controller.refresh({}); h.rebuild();
-  expect((await h.controller.unsubscribe(request())).status).toBe(502);
+  const before = structuredClone(h.store.watchlistAll());
+  expect((await h.controller.remove(request())).status).toBe(502);
   expect(h.snapshot().subscriptions.items).toEqual([visible(row)]);
+  expect(h.store.watchlistAll()).toEqual(before);
   fail = false;
-  const response = await h.controller.unsubscribe(request({ url: row.url, id: '999' }));
+  const response = await h.controller.remove(request({ url: row.url, id: '999' }));
   expect(response.status).toBe(200);
   const body = await response.json();
   expect(body.viewer).toBe('me');
@@ -129,7 +146,7 @@ test('failed DELETE retains the row; success removes it immediately and returns 
   expect(ids).toEqual(['42', '42']);
 });
 
-test('late refresh cannot restore a deleted row or its client cache; a later resubscription remains discoverable', async () => {
+test('late refresh cannot restore a removed row or its client cache, even after a resubscription without new activity', async () => {
   const pending = deferred();
   const started = deferred();
   let delay = false;
@@ -150,7 +167,7 @@ test('late refresh cannot restore a deleted row or its client cache; a later res
   delay = true;
   const stale = h.controller.refresh(options);
   await started.promise;
-  expect((await h.controller.unsubscribe(request())).status).toBe(200);
+  expect((await h.controller.remove(request())).status).toBe(200);
   pending.resolve();
   await stale; h.rebuild();
   expect(h.snapshot().subscriptions.items).toEqual([]);
@@ -159,16 +176,16 @@ test('late refresh cannot restore a deleted row or its client cache; a later res
   expect(subscriptionReads).toBe(3);
   subscribed = true;
   await h.controller.refresh(options); h.rebuild();
-  expect(h.snapshot().subscriptions.items.map(({ id }) => id)).toEqual(['42']);
+  expect(h.snapshot().subscriptions.items).toEqual([]);
 });
 
-test('successive unsubscribes use fresh clients and can remove different current rows', async () => {
+test('successive removals use fresh clients and can remove different current rows', async () => {
   const other = { ...row, id: '43', url: `${row.url}0` };
   const ids = [];
   const h = harness(() => ({ fetchSubscriptions: async () => result([row, other]), unsubscribe: async (id) => { ids.push(id); } }));
   await h.controller.refresh({}); h.rebuild();
-  expect((await h.controller.unsubscribe(request())).status).toBe(200);
-  expect((await h.controller.unsubscribe(request({ url: other.url }))).status).toBe(200);
+  expect((await h.controller.remove(request())).status).toBe(200);
+  expect((await h.controller.remove(request({ url: other.url }))).status).toBe(200);
   expect(h.snapshot().subscriptions.items).toEqual([]);
   expect(ids).toEqual(['42', '43']);
 });
@@ -248,7 +265,7 @@ test('a throwing tracked lookup keeps discovery results and known state', async 
   expect(h.snapshot().subscriptions.error).toBeNull();
   expect(h.snapshot().subscriptions.warnings).toEqual(['Tracked subjects unavailable: lookup exploded']);
   expect(h.snapshot().subscriptions.items).toEqual([visible({ ...row, updatedAt: '2026-10-29T00:00:00Z' })]);
-  expect((await h.controller.unsubscribe(request())).status).toBe(200);
+  expect((await h.controller.remove(request())).status).toBe(200);
 });
 
 test('discovery error keeps stored rows and skips the merge', async () => {
@@ -263,6 +280,50 @@ test('discovery error keeps stored rows and skips the merge', async () => {
   expect(h.snapshot().subscriptions.error).toBe('notifications denied');
   expect(h.snapshot().subscriptions.items).toEqual([visible(row)]);
   expect(stateClient.calls).toHaveLength(1);
+});
+
+test('acknowledging an open row makes it read and keeps it', async () => {
+  const h = harness(() => ({ fetchSubscriptions: async () => result() }));
+  await h.controller.refresh({}); h.rebuild();
+  expect(h.snapshot().subscriptions.unread).toBe(1);
+  const response = await h.controller.acknowledge(request());
+  expect(response.status).toBe(200);
+  const body = await response.json();
+  expect(body.subscriptions.items).toEqual([visible({ ...row, unread: false })]);
+  expect(body.subscriptions.unread).toBe(0);
+});
+
+test('acknowledging a closed row removes it and a refresh with the same unread thread keeps it gone', async () => {
+  const closed = { ...row, state: 'CLOSED', closedAt: row.updatedAt };
+  const h = harness(() => ({ fetchSubscriptions: async () => result([closed]) }));
+  await h.controller.refresh({}); h.rebuild();
+  expect(h.snapshot().subscriptions.items.map(({ url }) => url)).toEqual([row.url]);
+  const response = await h.controller.acknowledge(request());
+  expect(response.status).toBe(200);
+  expect((await response.json()).subscriptions.items).toEqual([]);
+  await h.controller.refresh({}); h.rebuild();
+  expect(h.snapshot().subscriptions.items).toEqual([]);
+});
+
+test('removing a confirmed subscription with a thread calls GitHub once, then removes the row', async () => {
+  const ids = [];
+  const h = harness(() => ({ fetchSubscriptions: async () => result(), unsubscribe: async (id) => { ids.push(id); } }));
+  await h.controller.refresh({}); h.rebuild();
+  const response = await h.controller.remove(request());
+  expect(response.status).toBe(200);
+  expect((await response.json()).subscriptions.items).toEqual([]);
+  expect(ids).toEqual(['42']);
+  expect(h.store.watchlistAll()[row.url].removedAt).toBeTruthy();
+});
+
+test('an authored-search rediscovery after remove does not bring the row back', async () => {
+  const authored = { ...row, id: null, authored: true, unread: false };
+  const h = harness(() => ({ fetchSubscriptions: async () => result([authored]) }));
+  await h.controller.refresh({}); h.rebuild();
+  expect((await h.controller.remove(request())).status).toBe(200);
+  await h.controller.refresh({}); h.rebuild();
+  await h.controller.refresh({}); h.rebuild();
+  expect(h.snapshot().subscriptions.items).toEqual([]);
 });
 
 for (const notifications of ['absent', 'failing']) {

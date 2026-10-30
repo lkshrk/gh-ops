@@ -16,7 +16,7 @@ let data = null;
 let mutationVersion = 0;
 let mutationQueue = Promise.resolve();
 const TABS = ['contributions', 'subscriptions', 'workflows', 'renovate'];
-const pendingUnsubscribes = new Set();
+const pendingRemovals = new Set();
 
 function initialTab() {
   if (location.hash) return location.hash.slice(1);
@@ -144,7 +144,8 @@ function renderContributions() {
 
 function subscriptionRow(item) {
   const type = { Issue: 'Issue', PullRequest: 'Pull request', Discussion: 'Discussion' }[item.type] || item.type || 'Unknown type';
-  const state = { OPEN: 'Open', CLOSED: 'Closed', MERGED: 'Merged' }[item.state] || 'Unknown state';
+  const state = { OPEN: 'State: Open', CLOSED: 'State: Closed', MERGED: 'State: Merged' }[item.state] || 'Unknown state';
+  const label = item.id && item.subscribed === true && data.subscriptions.canUnsubscribe ? 'Remove from watchlist and unsubscribe' : 'Remove from watchlist';
   return `<li class="row">
     <div class="row-main">
       <a class="title" href="${esc(item.url)}">${esc(item.title)}</a>
@@ -153,7 +154,7 @@ function subscriptionRow(item) {
         ${item.authored ? chip('Opened by you', 'muted') : ''}${item.unread ? chip('Unread', 'warn') : ''}${item.subscribed == null ? chip('Unknown subscription', 'warn') : ''}
       </div>
     </div>
-    ${data.subscriptions.canUnsubscribe && item.subscribed === true && item.id ? `<button type="button" class="unsubscribe" data-url="${esc(item.url)}" aria-label="Unsubscribe from ${esc(item.title)}"${pendingUnsubscribes.has(item.url) ? ' disabled' : ''}>Unsubscribe</button>` : ''}
+    <button type="button" class="remove" data-url="${esc(item.url)}" aria-label="${label}" title="${label}"${pendingRemovals.has(item.url) ? ' disabled' : ''}><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4h11M6 4V2.5h4V4M4 4l.7 9h6.6L12 4M6.5 7v3.5M9.5 7v3.5"/></svg></button>
     <span class="age">${when(item.updatedAt)}</span>
   </li>`;
 }
@@ -448,24 +449,45 @@ async function poll() {
   }
 }
 
-async function unsubscribe(button) {
+async function removeWatched(button) {
   const { url } = button.dataset;
-  if (button.disabled || pendingUnsubscribes.has(url)) return;
-  pendingUnsubscribes.add(url);
+  if (button.disabled || pendingRemovals.has(url)) return;
+  pendingRemovals.add(url);
   button.disabled = true;
   try {
-    await mutate('subscriptions/unsubscribe', { url });
+    await mutate('subscriptions/remove', { url });
   } catch (error) {
     button.disabled = false;
     const banner = document.getElementById('banner');
     banner.hidden = false;
-    banner.textContent = `Could not unsubscribe: ${error.message}`;
+    banner.textContent = `Could not remove: ${error.message}`;
   } finally {
-    pendingUnsubscribes.delete(url);
-    for (const control of document.querySelectorAll('.unsubscribe')) {
-      control.disabled = pendingUnsubscribes.has(control.dataset.url);
+    pendingRemovals.delete(url);
+    for (const control of document.querySelectorAll('.remove')) {
+      control.disabled = pendingRemovals.has(control.dataset.url);
     }
   }
+}
+
+function acknowledgeOpened(link) {
+  const url = link.getAttribute('href');
+  const request = fetch('subscriptions/acknowledge', {
+    method: 'POST',
+    keepalive: true,
+    redirect: 'manual',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url }),
+  });
+  const items = data?.subscriptions?.items;
+  const item = items?.find((candidate) => candidate.url === url);
+  if (item && (item.unread || item.state === 'CLOSED' || item.state === 'MERGED')) {
+    const closed = item.state === 'CLOSED' || item.state === 'MERGED';
+    const next = closed ? items.filter((candidate) => candidate !== item) : items.map((candidate) => (candidate === item ? { ...item, unread: false } : candidate));
+    data = { ...data, subscriptions: { ...data.subscriptions, items: next, unread: next.filter((candidate) => candidate.unread).length } };
+    render();
+  }
+  const settled = request.then((response) => (response.ok && response.type !== 'opaqueredirect' ? response : Promise.reject(new Error('not acknowledged'))));
+  mutationQueue = mutationQueue.then(() => load(settled, true)).catch(() => {});
 }
 
 document.addEventListener('click', (event) => {
@@ -474,9 +496,14 @@ document.addEventListener('click', (event) => {
     selectTab(tab.dataset.tab, true);
     return;
   }
-  const subscription = event.target.closest('.unsubscribe');
-  if (subscription) {
-    unsubscribe(subscription);
+  const title = event.target.closest('#subscriptions a.title');
+  if (title) {
+    acknowledgeOpened(title);
+    return;
+  }
+  const removal = event.target.closest('.remove');
+  if (removal) {
+    removeWatched(removal);
     return;
   }
   const toggle = event.target.closest('.done-toggle');
@@ -484,6 +511,11 @@ document.addEventListener('click', (event) => {
     setDone(toggle);
     return;
   }
+});
+
+document.addEventListener('auxclick', (event) => {
+  const title = event.button === 1 ? event.target.closest('#subscriptions a.title') : null;
+  if (title) acknowledgeOpened(title);
 });
 
 document.addEventListener('keydown', (event) => {

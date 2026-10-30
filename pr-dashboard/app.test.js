@@ -236,15 +236,16 @@ test('subscriptions escape text and show type/state/unread, warnings and unavail
     ] };
   await ui.show(snapshot);
   const html = ui.document.querySelector('#subscriptions .panel-body').innerHTML;
-  for (const value of ['&#60;title&#62;', '&#60;repo&#62;', '&#60;error&#62;', '&#60;lookup&#62;', 'Issue', 'Pull request', 'Discussion', 'Open', 'Merged', 'Unread', 'Unknown', 'truncated']) assert.ok(html.includes(value), value);
+  for (const value of ['&#60;title&#62;', '&#60;repo&#62;', '&#60;error&#62;', '&#60;lookup&#62;', 'Issue', 'Pull request', 'Discussion', 'State: Open', 'State: Merged', 'Unknown state', 'Unread', 'Unknown', 'truncated']) assert.ok(html.includes(value), value);
   assert.doesNotMatch(html, /<title>|<error>|<lookup>/);
-  assert.equal((html.match(/class="unsubscribe"/g) || []).length, 0);
+  assert.equal((html.match(/class="remove"/g) || []).length, 3);
+  assert.equal((html.match(/aria-label="Remove from watchlist"/g) || []).length, 3);
   snapshot.subscriptions = { ...snapshot.subscriptions, error: null, items: [] };
   await ui.show(snapshot);
   assert.match(ui.document.querySelector('#subscriptions .panel-body').innerHTML, /unavailable/i);
 });
 
-test('authored subscriptions are labelled and offer Unsubscribe only with a notification thread', async () => {
+test('authored subscriptions are labelled and offer unsubscribing only with a notification thread', async () => {
   const ui = client();
   const snapshot = fixture();
   snapshot.subscriptions.items = [
@@ -254,21 +255,24 @@ test('authored subscriptions are labelled and offer Unsubscribe only with a noti
   await ui.show(snapshot);
   const html = ui.document.querySelector('#subscriptions .panel-body').innerHTML;
   assert.equal((html.match(/Opened by you/g) || []).length, 2);
-  assert.equal((html.match(/class="unsubscribe"/g) || []).length, 1);
+  assert.equal((html.match(/class="remove"/g) || []).length, 2);
+  assert.equal((html.match(/aria-label="Remove from watchlist and unsubscribe" title="Remove from watchlist and unsubscribe"/g) || []).length, 1);
+  assert.equal((html.match(/aria-label="Remove from watchlist" title="Remove from watchlist"/g) || []).length, 1);
   assert.match(html, /data-url="https:\/\/github.com\/up\/repo\/issues\/1"/);
+  assert.match(html, /<svg[^>]*aria-hidden="true"/);
 });
 
-test('unsubscribe posts once, disables immediately, renders success and preserves selection', async () => {
+test('remove posts once, disables immediately, renders success and preserves selection', async () => {
   let resolve;
   const ui = client({ hash: '#subscriptions', request: () => new Promise((done) => { resolve = done; }) });
   const snapshot = fixture();
   const button = { disabled: false, dataset: { url: 'https://github.com/up/repo/issues/1' } };
-  const pending = ui.context.unsubscribe(button);
+  const pending = ui.context.removeWatched(button);
   assert.equal(button.disabled, true);
-  await ui.context.unsubscribe(button);
+  await ui.context.removeWatched(button);
   assert.equal(ui.calls.filter((call) => call.url !== 'data.json').length, 1);
   const call = ui.calls.at(-1);
-  assert.equal(call.url, 'subscriptions/unsubscribe');
+  assert.equal(call.url, 'subscriptions/remove');
   assert.equal(call.options.method, 'POST');
   assert.equal(call.options.redirect, 'manual');
   assert.equal(call.options.headers['Content-Type'], 'application/json');
@@ -279,7 +283,7 @@ test('unsubscribe posts once, disables immediately, renders success and preserve
   assert.equal(ui.document.getElementById('subscriptions').hidden, false);
 });
 
-test('discovery error retains stale rows without controls and recovery restores controls', async () => {
+test('discovery error retains stale rows and drops the unsubscribe wording until recovery', async () => {
   const ui = client();
   const snapshot = fixture();
   snapshot.subscriptions.items = [{ title: 'retained thread', id: '1', subscribed: true }];
@@ -289,7 +293,8 @@ test('discovery error retains stale rows without controls and recovery restores 
     await ui.show(snapshot);
     const html = ui.document.querySelector('#subscriptions .panel-body').innerHTML;
     assert.match(html, /retained thread/);
-    assert.equal(html.includes('class="unsubscribe"'), !error);
+    assert.ok(html.includes('class="remove"'));
+    assert.equal(html.includes('and unsubscribe'), !error);
     if (error) {
       assert.match(html, /notifications denied.*Showing previously fetched subscriptions/);
       assert.doesNotMatch(html, /not configured/);
@@ -297,7 +302,7 @@ test('discovery error retains stale rows without controls and recovery restores 
   }
 });
 
-for (const actions of [['unsubscribe', 'unsubscribe'], ['setDone', 'unsubscribe'], ['unsubscribe', 'setDone']]) {
+for (const actions of [['removeWatched', 'removeWatched'], ['setDone', 'removeWatched'], ['removeWatched', 'setDone']]) {
   test(`mutations serialize through response application: ${actions.join(' then ')}`, async () => {
     const initial = fixture();
     initial.subscriptions.items = [1, 2].map((number) => ({
@@ -316,7 +321,7 @@ for (const actions of [['unsubscribe', 'unsubscribe'], ['setDone', 'unsubscribe'
         assert.equal(ui.document.querySelector('#contributions .panel-body').innerHTML.includes('>Undo<'), current.contributions.open.length > 0);
       }
       const body = JSON.parse(options.body);
-      if (url === 'subscriptions/unsubscribe') current.subscriptions.items = current.subscriptions.items.filter((item) => item.url !== body.url);
+      if (url === 'subscriptions/remove') current.subscriptions.items = current.subscriptions.items.filter((item) => item.url !== body.url);
       else {
         current.contributions.open = current.contributions.attention.map((pr) => ({ ...pr, done: true }));
         current.contributions.attention = [];
@@ -326,7 +331,7 @@ for (const actions of [['unsubscribe', 'unsubscribe'], ['setDone', 'unsubscribe'
     } });
     await ui.show(initial);
     const pending = actions.map((action, index) => ui.context[action]({ disabled: false, dataset: {
-      url: action === 'unsubscribe' ? initial.subscriptions.items[index].url : initial.contributions.attention[0].url, done: 'true',
+      url: action === 'removeWatched' ? initial.subscriptions.items[index].url : initial.contributions.attention[0].url, done: 'true',
     } }));
     await new Promise((resolve) => setImmediate(resolve));
     assert.equal(requests, 1, 'later mutation must wait even while the first body is parsing');
@@ -334,7 +339,7 @@ for (const actions of [['unsubscribe', 'unsubscribe'], ['setDone', 'unsubscribe'
     await Promise.all(pending);
     assert.equal(requests, 2);
     const html = ui.document.querySelector('#subscriptions .panel-body').innerHTML;
-    for (const [index, action] of actions.entries()) if (action === 'unsubscribe') assert.ok(!html.includes(`thread ${index + 1}`));
+    for (const [index, action] of actions.entries()) if (action === 'removeWatched') assert.ok(!html.includes(`thread ${index + 1}`));
     assert.equal(ui.document.getElementById('count-subscriptions').textContent, actions.includes('setDone') ? 1 : 0);
     if (actions.includes('setDone')) assert.match(ui.document.querySelector('#contributions .panel-body').innerHTML, />Undo</);
   });
@@ -349,40 +354,40 @@ test('a failed mutation does not block a queued action', async () => {
   await ui.show(fixture());
   await Promise.all([
     ui.context.setDone({ dataset: { url: 'https://github.com/up/repo/pull/1', done: 'true' } }),
-    ui.context.unsubscribe({ dataset: { url: 'https://github.com/up/repo/issues/2' } }),
+    ui.context.removeWatched({ dataset: { url: 'https://github.com/up/repo/issues/2' } }),
   ]);
   assert.equal(requests, 2);
   assert.equal(ui.document.getElementById('banner').hidden, true);
 });
 
-test('unsubscribe errors preserve rows and auth redirect reloads without retrying mutation', async () => {
+test('remove errors preserve rows and auth redirect reloads without retrying mutation', async () => {
   for (const response of [{ ok: false, json: async () => ({ error: 'denied' }) }, { type: 'opaqueredirect' }]) {
     const ui = client({ request: async () => response });
     await ui.show(fixture());
     const panel = ui.document.querySelector('#subscriptions .panel-body');
     panel.innerHTML = 'existing row';
     const button = { disabled: false, dataset: { url: 'https://github.com/up/repo/issues/1' } };
-    await ui.context.unsubscribe(button);
+    await ui.context.removeWatched(button);
     assert.equal(panel.innerHTML, 'existing row');
     assert.equal(button.disabled, false);
     assert.equal(ui.document.getElementById('banner').hidden, false);
-    assert.match(ui.document.getElementById('banner').textContent, /Could not unsubscribe/);
+    assert.match(ui.document.getElementById('banner').textContent, /Could not remove/);
     assert.equal(ui.calls.filter((call) => call.url !== 'data.json').length, 1);
     assert.equal(ui.context.reloads, response.type ? 1 : 0);
   }
 });
 
-test('a poll cannot re-enable a pending unsubscribe or allow a second mutation', async () => {
+test('a poll cannot re-enable a pending removal or allow a second mutation', async () => {
   let resolve;
   const ui = client({ request: () => new Promise((done) => { resolve = done; }) });
   const snapshot = fixture();
   snapshot.subscriptions.items = [{ title: 'thread', url: 'https://github.com/up/repo/issues/1', id: '1', subscribed: true }];
   await ui.show(snapshot);
   const button = { disabled: false, dataset: { url: snapshot.subscriptions.items[0].url } };
-  const pending = ui.context.unsubscribe(button);
+  const pending = ui.context.removeWatched(button);
   await ui.show(snapshot);
-  assert.match(ui.document.querySelector('#subscriptions .panel-body').innerHTML, /class="unsubscribe"[^>]* disabled/);
-  await ui.context.unsubscribe({ ...button, disabled: false });
+  assert.match(ui.document.querySelector('#subscriptions .panel-body').innerHTML, /class="remove"[^>]* disabled/);
+  await ui.context.removeWatched({ ...button, disabled: false });
   assert.equal(ui.calls.filter((call) => call.url !== 'data.json').length, 1);
   resolve({ ok: false, json: async () => ({ error: 'denied' }) });
   await pending;
@@ -415,7 +420,7 @@ test('Back and Forward restore a hashless initial storage-selected tab without a
   assert.equal(ui.store.get('dashboardTab'), 'subscriptions');
 });
 
-test('a delayed pre-unsubscribe poll cannot restore a removed row or overwrite the successful snapshot', async () => {
+test('a delayed pre-removal poll cannot restore a removed row or overwrite the successful snapshot', async () => {
   // Cover a response arriving late and a body still parsing when the mutation succeeds.
   for (const delayBody of [false, true]) {
     const fresh = fixture();
@@ -430,7 +435,7 @@ test('a delayed pre-unsubscribe poll cannot restore a removed row or overwrite t
     const polling = ui.context.poll();
     await Promise.resolve();
     ui.context.fetch = async () => ({ ok: true, json: async () => fresh });
-    await ui.context.unsubscribe({ disabled: false, dataset: { url: old.subscriptions.items[0].url } });
+    await ui.context.removeWatched({ disabled: false, dataset: { url: old.subscriptions.items[0].url } });
     assert.equal(ui.document.getElementById('count-subscriptions').textContent, 0);
     release(delayBody ? old : { ok: true, json: async () => old });
     await polling;
@@ -442,4 +447,82 @@ test('a delayed pre-unsubscribe poll cannot restore a removed row or overwrite t
     await ui.context.poll();
     assert.match(ui.document.getElementById('freshness').textContent, /^3 repos/);
   }
+});
+
+const openItem = { title: 'open thread', url: 'https://github.com/up/repo/issues/1', repo: 'up/repo', number: 1, type: 'Issue', state: 'OPEN', unread: true, id: '1', subscribed: true, updatedAt: '2026-10-27T00:00:00Z' };
+const closedItem = { ...openItem, title: 'closed thread', url: 'https://github.com/up/repo/issues/2', number: 2, state: 'CLOSED' };
+
+function titleEvent(item, extra = {}) {
+  const link = { getAttribute: (name) => (name === 'href' ? item.url : null) };
+  let prevented = 0;
+  return { event: { target: { closest: (selector) => (selector === '#subscriptions a.title' ? link : null) }, button: 0, preventDefault() { prevented++; }, ...extra }, prevented: () => prevented };
+}
+
+test('a title click acknowledges with keepalive, never blocks navigation and reads an open row optimistically', async () => {
+  let resolve;
+  const ui = client({ request: () => new Promise((done) => { resolve = done; }) });
+  const snapshot = fixture();
+  snapshot.subscriptions.items = [openItem, closedItem];
+  snapshot.subscriptions.unread = 2;
+  await ui.show(snapshot);
+  const click = titleEvent(openItem);
+  ui.events.click(click.event);
+  assert.equal(click.prevented(), 0);
+  const call = ui.calls.at(-1);
+  assert.equal(call.url, 'subscriptions/acknowledge');
+  assert.equal(call.options.method, 'POST');
+  assert.equal(call.options.keepalive, true);
+  assert.equal(call.options.redirect, 'manual');
+  assert.equal(call.options.headers['Content-Type'], 'application/json');
+  assert.deepEqual(JSON.parse(call.options.body), { url: openItem.url });
+  const html = ui.document.querySelector('#subscriptions .panel-body').innerHTML;
+  assert.match(html, /open thread/);
+  assert.equal((html.match(/chip warn">Unread</g) || []).length, 1);
+  assert.match(ui.document.getElementById('kpis').innerHTML, /1 unread/);
+  const server = fixture();
+  server.subscriptions.items = [{ ...openItem, unread: false }, { ...closedItem, unread: false }];
+  resolve({ ok: true, json: async () => server });
+  await new Promise((done) => setImmediate(done));
+  assert.equal((ui.document.querySelector('#subscriptions .panel-body').innerHTML.match(/Unread</g) || []).length, 0);
+});
+
+test('a title click on a closed row removes it optimistically, and middle-click also acknowledges', async () => {
+  const ui = client({ request: () => new Promise(() => {}) });
+  const snapshot = fixture();
+  snapshot.subscriptions.items = [openItem, closedItem];
+  snapshot.subscriptions.unread = 2;
+  await ui.show(snapshot);
+  const click = titleEvent(closedItem);
+  ui.events.click(click.event);
+  assert.equal(click.prevented(), 0);
+  assert.doesNotMatch(ui.document.querySelector('#subscriptions .panel-body').innerHTML, /closed thread/);
+  assert.equal(ui.document.getElementById('count-subscriptions').textContent, 1);
+  const middle = titleEvent(openItem, { button: 1 });
+  ui.events.auxclick(middle.event);
+  assert.equal(middle.prevented(), 0);
+  assert.equal(ui.calls.filter((call) => call.url === 'subscriptions/acknowledge').length, 2);
+  ui.events.auxclick(titleEvent(openItem, { button: 2 }).event);
+  assert.equal(ui.calls.filter((call) => call.url === 'subscriptions/acknowledge').length, 2);
+});
+
+test('a failed acknowledgement stays silent', async () => {
+  const ui = client({ request: async () => ({ ok: false, json: async () => ({ error: 'denied' }) }) });
+  const snapshot = fixture();
+  snapshot.subscriptions.items = [openItem];
+  await ui.show(snapshot);
+  ui.events.click(titleEvent(openItem).event);
+  await new Promise((done) => setImmediate(done));
+  assert.equal(ui.document.getElementById('banner').hidden, true);
+});
+
+test('subscription rows use the standard row markup with a state chip and no transition copy', async () => {
+  const ui = client();
+  const snapshot = fixture();
+  snapshot.subscriptions.items = [openItem, closedItem];
+  await ui.show(snapshot);
+  const html = ui.document.querySelector('#subscriptions .panel-body').innerHTML;
+  assert.equal((html.match(/<ul class="rows">/g) || []).length, 1);
+  assert.equal((html.match(/<li class="row">/g) || []).length, 2);
+  for (const part of ['row-main', 'class="title" href="https://github.com/up/repo/issues/1"', 'class="meta"', 'class="age"', 'chip good">State: Open<', 'chip muted">State: Closed<']) assert.ok(html.includes(part), part);
+  assert.doesNotMatch(html, /→|target=/);
 });

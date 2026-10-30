@@ -1,5 +1,5 @@
 import { summarizeSubscriptions } from './dashboard.js';
-import { applyTracked, mergeDiscovered, prune, rows, settleAdded } from './watchlist.js';
+import { acknowledge as watchlistAcknowledge, applyTracked, markRemoved, mergeDiscovered, prune, rows, settleAdded } from './watchlist.js';
 
 export function createSubscriptionsController({ createClient, watchStore, rebuild, respond, json = (status, body) => Response.json(body, { status }) }) {
   let client = null;
@@ -27,7 +27,7 @@ export function createSubscriptionsController({ createClient, watchStore, rebuil
       if (version !== generation) return;
       const surviving = (entries) => discovered.threads.filter((thread) => !(thread.url in before) || thread.url in entries);
       const draft = { ...watchStore.watchlistAll() };
-      mergeDiscovered(draft, surviving(draft), new Date());
+      mergeDiscovered(draft, surviving(draft));
       const targets = Object.values(draft).filter((entry) => !entry.removedAt);
       let tracked = { subjects: new Map(), warnings: [] };
       if (options?.stateClient?.fetchTrackedSubjects && targets.length) {
@@ -39,10 +39,10 @@ export function createSubscriptionsController({ createClient, watchStore, rebuil
       }
       if (version !== generation) return;
 
-      // Synchronous from here: re-read the store so acknowledges and removals made during the awaits survive.
+      // Synchronous from here: re-read the store.
       const entries = { ...watchStore.watchlistAll() };
       const now = new Date();
-      const added = mergeDiscovered(entries, surviving(entries), now);
+      const added = mergeDiscovered(entries, surviving(entries));
       applyTracked(entries, tracked.subjects);
       settleAdded(entries, added);
       prune(entries, now);
@@ -54,32 +54,50 @@ export function createSubscriptionsController({ createClient, watchStore, rebuil
     }
   }
 
-  async function unsubscribe(request) {
-    if (request.method !== 'POST') return json(405, { error: 'method not allowed' });
+  async function target(request) {
+    if (request.method !== 'POST') return { failure: json(405, { error: 'method not allowed' }) };
     if (request.headers.get('content-type')?.split(';')[0].trim() !== 'application/json') {
-      return json(415, { error: 'expected application/json' });
+      return { failure: json(415, { error: 'expected application/json' }) };
     }
     const site = request.headers.get('sec-fetch-site');
-    if (site && site !== 'same-origin') return json(403, { error: 'cross-site request' });
+    if (site && site !== 'same-origin') return { failure: json(403, { error: 'cross-site request' }) };
     const body = await request.json().catch(() => null);
-    if (typeof body?.url !== 'string') return json(400, { error: 'expected {"url": string}' });
-    if (!snapshot().canUnsubscribe) return json(503, { error: 'notifications unavailable' });
-    const thread = snapshot().items.find((item) => item.url === body.url && item.subscribed === true && item.id);
-    if (!thread) return json(404, { error: 'no eligible subscription with that url' });
+    if (typeof body?.url !== 'string') return { failure: json(400, { error: 'expected {"url": string}' }) };
+    const row = rows(watchStore.watchlistAll()).find((item) => item.url === body.url);
+    if (!row) return { failure: json(404, { error: 'no watched item with that url' }) };
+    return { row };
+  }
 
-    try {
-      client ??= createClient();
-      await client.unsubscribe(thread.id);
-    } catch {
-      return json(502, { error: 'could not unsubscribe' });
-    }
-    generation++;
-    // Retire all old caches too: an in-flight REST response may repopulate them after DELETE.
-    client = null;
-    watchStore.deleteWatch(thread.url);
+  function update(change) {
+    const entries = { ...watchStore.watchlistAll() };
+    change(entries);
+    watchStore.replaceWatch(entries);
     rebuild();
     return respond();
   }
 
-  return { snapshot, refresh, unsubscribe };
+  async function acknowledge(request) {
+    const { row, failure } = await target(request);
+    if (failure) return failure;
+    return update((entries) => watchlistAcknowledge(entries, row.url, new Date()));
+  }
+
+  async function remove(request) {
+    const { row, failure } = await target(request);
+    if (failure) return failure;
+    if (row.id && row.subscribed === true && snapshot().canUnsubscribe) {
+      try {
+        client ??= createClient();
+        await client.unsubscribe(row.id);
+      } catch {
+        return json(502, { error: 'could not unsubscribe' });
+      }
+      generation++;
+      // Retire all old caches too: an in-flight REST response may repopulate them after DELETE.
+      client = null;
+    }
+    return update((entries) => markRemoved(entries, row.url, new Date()));
+  }
+
+  return { snapshot, refresh, acknowledge, remove };
 }

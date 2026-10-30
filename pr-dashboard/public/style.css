@@ -273,7 +273,7 @@ h2 { margin: 0; font-size: 16px; }
 .chip.muted { background: var(--panel-2); color: var(--muted); }
 .chip.merged { background: var(--merged-bg); color: var(--merged); }
 
-.done-toggle, .unsubscribe {
+.done-toggle, .remove {
   flex: none;
   padding: 2px 10px;
   border: 1px solid var(--line);
@@ -291,9 +291,10 @@ h2 { margin: 0; font-size: 16px; }
 .done-toggle.undo { color: var(--muted); font-weight: 500; }
 .done-toggle.undo:hover { background: var(--panel-2); border-color: var(--muted); color: var(--text); }
 .done-toggle:disabled { opacity: 0.5; cursor: progress; }
-.unsubscribe { color: var(--muted); }
-.unsubscribe:hover { background: var(--panel-2); border-color: var(--muted); }
-.unsubscribe:disabled { opacity: 0.5; cursor: progress; }
+.remove { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 24px; padding: 0; color: var(--muted); }
+.remove svg { display: block; }
+.remove:hover { background: var(--panel-2); border-color: var(--muted); color: var(--text); }
+.remove:disabled { opacity: 0.5; cursor: progress; }
 
 .repo { display: inline-flex; align-items: center; gap: 0; font-size: 12.5px; }
 .repo .name { color: var(--text); font-weight: 500; }

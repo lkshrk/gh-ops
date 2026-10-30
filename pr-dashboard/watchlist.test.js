@@ -16,18 +16,18 @@ const unknown = { title: null, updatedAt: null, state: null, closedAt: null, sub
 
 test('a new entry is not unread unless its notification is unread', () => {
   const entries = {};
-  expect(mergeDiscovered(entries, [thread()], NOW)).toEqual([URL]);
+  expect(mergeDiscovered(entries, [thread()])).toEqual([URL]);
   expect(entries[URL]).toEqual(entry());
   expect(isUnread(entries[URL])).toBe(false);
 
   const unread = {};
-  mergeDiscovered(unread, [thread({ unread: true })], NOW);
+  mergeDiscovered(unread, [thread({ unread: true })]);
   expect(unread[URL].seenUpdatedAt).toBeNull();
   expect(unread[URL].notificationUnread).toBe(true);
   expect(isUnread(unread[URL])).toBe(true);
 
   const authored = {};
-  mergeDiscovered(authored, [thread({ id: null, authored: true })], NOW);
+  mergeDiscovered(authored, [thread({ id: null, authored: true })]);
   expect(authored[URL]).toEqual(entry({ threadId: null, authored: true, notificationUpdatedAt: null }));
   expect(isUnread(authored[URL])).toBe(false);
 });
@@ -41,12 +41,12 @@ test('settleAdded marks tracked activity on new read entries as seen, but not un
 
 test('an existing entry keeps seen state and refreshes notification fields', () => {
   const entries = { [URL]: entry({ threadId: null, authored: true }) };
-  expect(mergeDiscovered(entries, [thread({ unread: true, updatedAt: '2026-10-28T00:00:00Z', title: 'Renamed' })], NOW)).toEqual([]);
+  expect(mergeDiscovered(entries, [thread({ unread: true, updatedAt: '2026-10-28T00:00:00Z', title: 'Renamed' })])).toEqual([]);
   expect(entries[URL]).toEqual(entry({
     authored: true, title: 'Renamed', updatedAt: '2026-10-28T00:00:00Z', notificationUnread: true, notificationUpdatedAt: '2026-10-28T00:00:00Z',
   }));
   expect(isUnread(entries[URL])).toBe(true);
-  mergeDiscovered(entries, [thread({ id: null, authored: false, title: null, updatedAt: null, state: null })], NOW);
+  mergeDiscovered(entries, [thread({ id: null, authored: false, title: null, updatedAt: null, state: null })]);
   expect(entries[URL].threadId).toBe('42');
   expect(entries[URL].authored).toBe(true);
   expect(entries[URL].title).toBe('Renamed');
@@ -78,17 +78,17 @@ test('a closed unread entry is kept, and acknowledging it tombstones it', () => 
   expect(acknowledge(entries, URL, NOW)).toBe(true);
   expect(entries[URL].removedAt).toBe(NOW.toISOString());
   expect(rows(entries)).toEqual([]);
-  mergeDiscovered(entries, [thread({ unread: true, state: 'CLOSED', updatedAt: '2026-10-28T00:00:00Z' })], NOW);
+  mergeDiscovered(entries, [thread({ unread: true, state: 'CLOSED', updatedAt: '2026-10-28T00:00:00Z' })]);
   expect(rows(entries)).toEqual([]);
 });
 
 test('discovery never moves updatedAt backwards', () => {
   const entries = { [URL]: entry({ updatedAt: '2026-10-29T00:00:00Z', seenUpdatedAt: '2026-10-27T00:00:00Z' }) };
-  mergeDiscovered(entries, [thread({ updatedAt: '2026-10-28T00:00:00Z' })], NOW);
+  mergeDiscovered(entries, [thread({ updatedAt: '2026-10-28T00:00:00Z' })]);
   expect(entries[URL].updatedAt).toBe('2026-10-29T00:00:00Z');
   expect(entries[URL].notificationUpdatedAt).toBe('2026-10-28T00:00:00Z');
   expect(isUnread(entries[URL])).toBe(true);
-  mergeDiscovered(entries, [thread({ updatedAt: '2026-10-30T00:00:00Z' })], NOW);
+  mergeDiscovered(entries, [thread({ updatedAt: '2026-10-30T00:00:00Z' })]);
   expect(entries[URL].updatedAt).toBe('2026-10-30T00:00:00Z');
 });
 
@@ -124,7 +124,7 @@ test('applyTracked copies lookup fields and skips tombstones and missing results
 
 test('pull requests are ignored', () => {
   const entries = {};
-  expect(mergeDiscovered(entries, [thread({ type: 'PullRequest' })], NOW)).toEqual([]);
+  expect(mergeDiscovered(entries, [thread({ type: 'PullRequest' })])).toEqual([]);
   expect(entries).toEqual({});
 });
 
@@ -135,11 +135,11 @@ test('a tombstone is not revived by authored search or older/authored notificati
     thread({ id: null, authored: true, updatedAt: '2026-10-29T00:00:00Z' }),
     thread({ unread: true, updatedAt: '2026-10-27T12:00:00Z' }),
     thread({ authored: true, unread: true, updatedAt: '2026-10-29T00:00:00Z' }),
-  ], NOW);
+  ]);
   expect(entries[URL]).toEqual(tombstone);
   expect(rows(entries)).toEqual([]);
 
-  mergeDiscovered(entries, [thread({ unread: true, updatedAt: '2026-10-29T00:00:00Z' })], NOW);
+  mergeDiscovered(entries, [thread({ unread: true, updatedAt: '2026-10-29T00:00:00Z' })]);
   expect(entries[URL].removedAt).toBeNull();
   expect(entries[URL].seenUpdatedAt).toBe('2026-10-28T00:00:00Z');
   expect(isUnread(entries[URL])).toBe(true);
@@ -175,14 +175,14 @@ test('seenUpdatedAt never decreases', () => {
   const entries = { [URL]: entry({ seenUpdatedAt: later }) };
   acknowledge(entries, URL, NOW);
   expect(entries[URL].seenUpdatedAt).toBe(later);
-  mergeDiscovered(entries, [thread({ updatedAt: '2026-10-20T00:00:00Z' })], NOW);
+  mergeDiscovered(entries, [thread({ updatedAt: '2026-10-20T00:00:00Z' })]);
   settleAdded(entries, [URL]);
   expect(entries[URL].seenUpdatedAt).toBe(later);
   applyTracked(entries, new Map([[URL, { ...unknown, updatedAt: '2026-10-01T00:00:00Z' }]]));
   expect(entries[URL].seenUpdatedAt).toBe(later);
 
   const revived = { [URL]: entry({ removedAt: '2026-10-28T00:00:00Z', seenUpdatedAt: later }) };
-  mergeDiscovered(revived, [thread({ unread: true, updatedAt: '2026-10-30T00:00:00Z' })], NOW);
+  mergeDiscovered(revived, [thread({ unread: true, updatedAt: '2026-10-30T00:00:00Z' })]);
   expect(revived[URL].removedAt).toBeNull();
   expect(revived[URL].seenUpdatedAt).toBe(later);
 });

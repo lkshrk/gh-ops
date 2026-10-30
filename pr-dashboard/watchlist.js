@@ -58,7 +58,7 @@ function revives(entry, thread) {
   return Boolean(thread.id) && thread.authored === false && time(entry.removedAt) !== null && isAfter(thread.updatedAt, entry.removedAt);
 }
 
-function mergeDiscovered(entries, threads, _now) {
+function mergeDiscovered(entries, threads) {
   const added = [];
   for (const thread of threads || []) {
     if (!thread?.url || thread.type === 'PullRequest') continue;
