@@ -94,6 +94,34 @@ input) pins a run to specific repos and disables autodiscover.
 `config.js` is self-contained: the action mounts only that file into the
 container, so it must not `require` sibling files.
 
+### Bun Extractor Workaround
+
+The central config exports an async factory that repairs a missing Bun
+single-file extractor before Renovate starts processing repositories. Renovate
+44.198.2 calls this extractor during pending-version checks, but its Bun manager
+does not export it, causing `Could not re-extract the packageFile after updating
+it` for valid manifests.
+
+The factory adds npm's extractor to Bun's manager registry entry and preserves
+all existing Bun hooks. It leaves an upstream-provided extractor untouched.
+Release-age checks remain enabled. This applies to every repository processed
+by this runner; no repository-local preset change is needed.
+
+This workaround uses Renovate's internal module layout, resolved relative to
+its running entrypoint. An incompatible layout fails startup with a specific
+error. Remove the workaround once the deployed Renovate version exports Bun's
+single-file extractor upstream.
+
+Run the integration checks against an installed Renovate package:
+
+```sh
+RENOVATE_TEST_DIST_DIR=/path/to/node_modules/renovate/dist \
+  node --test renovate/config.test.js
+```
+
+The tests use Renovate's real config loader and manager dispatcher, including
+the missing-extractor case, preservation of an upstream fix, and layout errors.
+
 ## Shared Presets
 
 Use these repo-local configs:
