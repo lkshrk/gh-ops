@@ -120,6 +120,18 @@ to their `extends`; repos that only want action and runner updates use:
 }
 ```
 
+Repos whose CI is trusted to gate major updates add `automerge-major.json5`
+after their base preset:
+
+```json5
+{
+  extends: [
+    "github>lkshrk/gh-ops//renovate/presets/app-library.json5",
+    "github>lkshrk/gh-ops//renovate/presets/automerge-major.json5",
+  ],
+}
+```
+
 ## Policy
 
 - patch, minor, pin, and digest updates may automerge after checks pass
@@ -128,5 +140,7 @@ to their `extends`; repos that only want action and runner updates use:
   labels) update at any time regardless of the repo schedule; non-majors are
   grouped into one PR, majors open their own PR without approval and never
   automerge
+- `automerge-major.json5` opts a repo into automerging all majors, GitHub
+  Actions included, without approval once checks pass
 - no global `ignoreTests`
 - repo-specific exceptions stay in the target repo config
