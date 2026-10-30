@@ -208,9 +208,9 @@ test('acknowledge, remove and closed deletion during an in-flight refresh are no
 
   pending = deferred();
   const inflight = h.controller.refresh({ stateClient });
-  expect(update(h.store, (entries) => acknowledge(entries, row.url))).toBe(true);
+  expect(update(h.store, (entries) => acknowledge(entries, row.url, new Date()))).toBe(true);
   expect(update(h.store, (entries) => markRemoved(entries, removed.url, new Date('2026-10-28T00:00:00Z')))).toBe(true);
-  expect(update(h.store, (entries) => acknowledge(entries, closed.url))).toBe(true);
+  expect(update(h.store, (entries) => acknowledge(entries, closed.url, new Date('2026-10-28T00:00:00Z')))).toBe(true);
   pending.resolve();
   await inflight; h.rebuild();
 
@@ -218,8 +218,37 @@ test('acknowledge, remove and closed deletion during an in-flight refresh are no
   expect(h.snapshot().subscriptions.unread).toBe(0);
   expect(h.store.watchlistAll()[row.url].seenUpdatedAt).toBe(row.updatedAt);
   expect(h.store.watchlistAll()[removed.url].removedAt).toBe('2026-10-28T00:00:00.000Z');
-  expect(closed.url in h.store.watchlistAll()).toBe(false);
+  expect(h.store.watchlistAll()[closed.url].removedAt).toBe('2026-10-28T00:00:00.000Z');
   expect(stateClient.calls[1]).toEqual([row.url]);
+});
+
+test('an acknowledged closed entry stays gone while its notification is still unread', async () => {
+  const closed = { ...row, state: 'CLOSED', closedAt: row.updatedAt };
+  const stateClient = tracker({ [row.url]: { title: 'Issue', updatedAt: row.updatedAt, state: 'CLOSED', closedAt: row.updatedAt, subscribed: true } });
+  const h = harness(() => ({ fetchSubscriptions: async () => result([closed]) }));
+  await h.controller.refresh({ stateClient }); h.rebuild();
+  expect(h.snapshot().subscriptions.items.map(({ url, unread }) => [url, unread])).toEqual([[row.url, true]]);
+  expect(update(h.store, (entries) => acknowledge(entries, row.url, new Date()))).toBe(true);
+  await h.controller.refresh({ stateClient }); h.rebuild();
+  await h.controller.refresh({ stateClient }); h.rebuild();
+  expect(h.snapshot().subscriptions.items).toEqual([]);
+  expect(h.snapshot().subscriptions.unread).toBe(0);
+});
+
+test('a throwing tracked lookup keeps discovery results and known state', async () => {
+  let fail = false;
+  const stateClient = { fetchTrackedSubjects: async (entries) => {
+    if (fail) throw new Error('lookup exploded');
+    return { subjects: new Map(entries.map(({ url }) => [url, { title: 'Tracked', updatedAt: '2026-10-29T00:00:00Z', state: 'OPEN', closedAt: null, subscribed: true }])), warnings: [] };
+  } };
+  const h = harness(() => ({ fetchSubscriptions: async () => result([row]), unsubscribe: async () => {} }));
+  await h.controller.refresh({ stateClient }); h.rebuild();
+  fail = true;
+  await h.controller.refresh({ stateClient }); h.rebuild();
+  expect(h.snapshot().subscriptions.error).toBeNull();
+  expect(h.snapshot().subscriptions.warnings).toEqual(['Tracked subjects unavailable: lookup exploded']);
+  expect(h.snapshot().subscriptions.items).toEqual([visible({ ...row, updatedAt: '2026-10-29T00:00:00Z' })]);
+  expect((await h.controller.unsubscribe(request())).status).toBe(200);
 });
 
 test('discovery error keeps stored rows and skips the merge', async () => {

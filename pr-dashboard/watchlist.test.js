@@ -56,7 +56,7 @@ test('an existing entry keeps seen state and refreshes notification fields', () 
 test('an entry stays after acknowledge while open, and updatedAt advancing makes it unread again', () => {
   const entries = { [URL]: entry({ updatedAt: '2026-10-28T00:00:00Z', notificationUnread: true, notificationUpdatedAt: '2026-10-29T00:00:00Z' }) };
   expect(isUnread(entries[URL])).toBe(true);
-  expect(acknowledge(entries, URL)).toBe(true);
+  expect(acknowledge(entries, URL, NOW)).toBe(true);
   expect(entries[URL].seenUpdatedAt).toBe('2026-10-29T00:00:00Z');
   expect(isUnread(entries[URL])).toBe(false);
   expect(rows(entries).map(({ url }) => url)).toEqual([URL]);
@@ -65,18 +65,31 @@ test('an entry stays after acknowledge while open, and updatedAt advancing makes
 
   applyTracked(entries, new Map([[URL, { title: 'Issue', updatedAt: '2026-10-30T00:00:00Z', state: 'OPEN', closedAt: null, subscribed: true }]]));
   expect(isUnread(entries[URL])).toBe(true);
-  expect(acknowledge(entries, 'missing')).toBe(false);
+  expect(acknowledge(entries, 'missing', NOW)).toBe(false);
 });
 
-test('a closed unread entry is kept, and acknowledging it deletes it', () => {
+test('a closed unread entry is kept, and acknowledging it tombstones it', () => {
   const entries = { [URL]: entry({ state: 'CLOSED', closedAt: '2026-10-28T00:00:00Z', updatedAt: '2026-10-28T00:00:00Z' }) };
   prune(entries, NOW);
   expect(rows(entries)).toEqual([{
     id: '42', url: URL, repo: 'other/repo', owner: 'other', number: 1, title: 'Issue', type: 'Issue', state: 'CLOSED', authored: false,
     unread: true, subscribed: true, updatedAt: '2026-10-28T00:00:00Z', closedAt: '2026-10-28T00:00:00Z', mergedAt: null,
   }]);
-  expect(acknowledge(entries, URL)).toBe(true);
-  expect(entries).toEqual({});
+  expect(acknowledge(entries, URL, NOW)).toBe(true);
+  expect(entries[URL].removedAt).toBe(NOW.toISOString());
+  expect(rows(entries)).toEqual([]);
+  mergeDiscovered(entries, [thread({ unread: true, state: 'CLOSED', updatedAt: '2026-10-28T00:00:00Z' })], NOW);
+  expect(rows(entries)).toEqual([]);
+});
+
+test('discovery never moves updatedAt backwards', () => {
+  const entries = { [URL]: entry({ updatedAt: '2026-10-29T00:00:00Z', seenUpdatedAt: '2026-10-27T00:00:00Z' }) };
+  mergeDiscovered(entries, [thread({ updatedAt: '2026-10-28T00:00:00Z' })], NOW);
+  expect(entries[URL].updatedAt).toBe('2026-10-29T00:00:00Z');
+  expect(entries[URL].notificationUpdatedAt).toBe('2026-10-28T00:00:00Z');
+  expect(isUnread(entries[URL])).toBe(true);
+  mergeDiscovered(entries, [thread({ updatedAt: '2026-10-30T00:00:00Z' })], NOW);
+  expect(entries[URL].updatedAt).toBe('2026-10-30T00:00:00Z');
 });
 
 test('a closed seen entry is pruned and so is subscribed === false', () => {
@@ -160,7 +173,7 @@ test('rows order unread first, then updatedAt desc, with null last', () => {
 test('seenUpdatedAt never decreases', () => {
   const later = '2026-10-29T00:00:00Z';
   const entries = { [URL]: entry({ seenUpdatedAt: later }) };
-  acknowledge(entries, URL);
+  acknowledge(entries, URL, NOW);
   expect(entries[URL].seenUpdatedAt).toBe(later);
   mergeDiscovered(entries, [thread({ updatedAt: '2026-10-20T00:00:00Z' })], NOW);
   settleAdded(entries, [URL]);

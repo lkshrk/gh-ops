@@ -565,11 +565,12 @@ function createGitHubClient({
       } catch (error) {
         warnings.push(`Tracked subjects unavailable: ${error.message}`);
       }
+      if (!data) continue;
       batch.forEach(({ entry, label }, i) => {
         const subject = data?.[`repo${i}`]?.subject;
         if (!subject) {
           subjects.set(entry.url, unknown());
-          if (data) warnings.push(`Tracked subject ${label} unavailable.`);
+          warnings.push(`Tracked subject ${label} unavailable.`);
           return;
         }
         let state = null;

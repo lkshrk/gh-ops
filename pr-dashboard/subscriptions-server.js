@@ -29,9 +29,14 @@ export function createSubscriptionsController({ createClient, watchStore, rebuil
       const draft = { ...watchStore.watchlistAll() };
       mergeDiscovered(draft, surviving(draft), new Date());
       const targets = Object.values(draft).filter((entry) => !entry.removedAt);
-      const tracked = options?.stateClient?.fetchTrackedSubjects && targets.length
-        ? await options.stateClient.fetchTrackedSubjects(targets)
-        : { subjects: new Map(), warnings: [] };
+      let tracked = { subjects: new Map(), warnings: [] };
+      if (options?.stateClient?.fetchTrackedSubjects && targets.length) {
+        try {
+          tracked = await options.stateClient.fetchTrackedSubjects(targets);
+        } catch (cause) {
+          tracked = { subjects: new Map(), warnings: [`Tracked subjects unavailable: ${cause.message}`] };
+        }
+      }
       if (version !== generation) return;
 
       // Synchronous from here: re-read the store so acknowledges and removals made during the awaits survive.

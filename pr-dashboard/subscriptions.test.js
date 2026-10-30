@@ -419,7 +419,7 @@ test('invalid tracked entries are skipped with a warning and never queried', asy
   expect(queries[0].match(/repository\(/g)).toHaveLength(1);
 });
 
-test('a failing tracked batch keeps its entries unknown and other batches continue', async () => {
+test('a failing tracked batch leaves its entries out and other batches continue', async () => {
   let calls = 0;
   const c = createGitHubClient({ token: 'test-viewer', fetchImpl: async (_url, init) => {
     calls += 1;
@@ -431,8 +431,7 @@ test('a failing tracked batch keeps its entries unknown and other batches contin
   } });
   const entries = Array.from({ length: 7 }, (_, i) => tracked('a/b', i + 1));
   const { subjects, warnings } = await c.fetchTrackedSubjects(entries);
-  expect(subjects.size).toBe(7);
-  entries.slice(0, 6).forEach((entry) => expect(subjects.get(entry.url)).toEqual(unknownSubject));
+  expect([...subjects.keys()]).toEqual([entries[6].url]);
   expect(subjects.get(entries[6].url).title).toBe('ok');
   expect(warnings).toHaveLength(1);
   expect(warnings[0]).toContain('400');

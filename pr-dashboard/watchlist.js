@@ -46,7 +46,7 @@ function refreshed(entry, thread) {
     next.notificationUpdatedAt = thread.updatedAt ?? null;
   }
   if (thread.title != null) next.title = thread.title;
-  if (thread.updatedAt != null) next.updatedAt = thread.updatedAt;
+  next.updatedAt = latest(entry.updatedAt, thread.updatedAt);
   if (thread.state != null) {
     next.state = thread.state;
     next.closedAt = thread.closedAt ?? null;
@@ -108,10 +108,10 @@ function prune(entries, now) {
   }
 }
 
-function acknowledge(entries, url) {
+function acknowledge(entries, url, now = new Date()) {
   const entry = entries[url];
   if (!entry || entry.removedAt) return false;
-  if (isClosed(entry)) delete entries[url];
+  if (isClosed(entry)) entries[url] = { ...entry, removedAt: now.toISOString() };
   else entries[url] = { ...entry, seenUpdatedAt: latest(entry.seenUpdatedAt, entry.updatedAt, entry.notificationUpdatedAt) };
   return true;
 }
