@@ -22,7 +22,7 @@ const hostRules = [
     : []),
 ];
 
-module.exports = {
+const config = {
   platform: 'github',
   ...(process.env.RENOVATE_TOKEN ? { token: process.env.RENOVATE_TOKEN } : {}),
 
@@ -48,4 +48,32 @@ module.exports = {
 
   
   timezone: 'Europe/Berlin',
+};
+
+module.exports = async () => {
+  // Renovate 44.198.2's pending-version check calls a single-file extractor
+  // that Bun does not export. Reuse npm's extractor, as Bun already does for
+  // package.json extraction. Remove this workaround once upstream fixes Bun.
+  // https://github.com/renovatebot/renovate/blob/44.198.2/lib/modules/manager/bun/index.ts
+  const { realpathSync } = require('node:fs');
+  const { dirname, join } = require('node:path');
+  const { pathToFileURL } = require('node:url');
+
+  try {
+    const distDir = dirname(realpathSync(process.argv[1]));
+    const { getManagers } = await import(pathToFileURL(join(distDir, 'modules/manager/index.js')).href);
+    const managers = getManagers();
+    const bun = managers.get('bun');
+    if (!bun) throw new Error('Bun manager is unavailable');
+
+    if (typeof bun.extractPackageFile !== 'function') {
+      const { extractPackageFile } = await import(pathToFileURL(join(distDir, 'modules/manager/npm/extract/index.js')).href);
+      if (typeof extractPackageFile !== 'function') throw new Error('npm extractor is unavailable');
+      managers.set('bun', { ...bun, extractPackageFile });
+    }
+  } catch (cause) {
+    throw new Error('Cannot apply the central Renovate Bun extractor workaround; review the installed Renovate module layout', { cause });
+  }
+
+  return config;
 };
