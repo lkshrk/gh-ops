@@ -22,6 +22,10 @@ still enforces every CI, release-age, and approval gate. Failed suites, forked o
 unassociated heads, other apps, and non-Renovate branches are ignored. Central
 Renovate runs use `main`, so their completion cannot trigger another run.
 
+The Renovate workflow queues pending runs per owner with `queue: max` so a new
+targeted dispatch does not replace another repository's pending run. Running
+jobs are allowed to finish; the two-hour schedule remains the fallback.
+
 `registry_package.published` deliveries trigger a run for the consumer mapped to the
 publishing repository in `PACKAGE_TRIGGER_TARGETS`, so a self-published image is picked up
 minutes after it lands in GHCR instead of on the next scheduled run. A release that pushes

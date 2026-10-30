@@ -24,6 +24,7 @@ jobs:
         owner: [webdev-harke, routivo, loc-news, lkshrk]
     concurrency:
       group: renovate-${{ matrix.owner }}
+      queue: max
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@v7
