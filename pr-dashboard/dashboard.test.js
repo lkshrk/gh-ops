@@ -140,7 +140,6 @@ test('isDoneValid keeps a flag set before any human feedback until the first com
   assert.equal(isDoneValid(red, undefined), false);
 });
 
-
 function summarize(overrides) {
   return summarizeContribution(pullRequest(overrides), 'me');
 }

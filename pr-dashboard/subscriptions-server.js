@@ -1,14 +1,15 @@
 import { summarizeSubscriptions } from './dashboard.js';
+import { applyTracked, mergeDiscovered, prune, rows, settleAdded } from './watchlist.js';
 
-export function createSubscriptionsController({ createClient, rebuild, respond, json = (status, body) => Response.json(body, { status }) }) {
+export function createSubscriptionsController({ createClient, watchStore, rebuild, respond, json = (status, body) => Response.json(body, { status }) }) {
   let client = null;
   let generation = 0;
-  let data = { threads: [], warnings: [], truncated: false };
+  let data = { warnings: [], truncated: false };
   let error = null;
 
   function snapshot() {
     return {
-      ...summarizeSubscriptions(data.threads),
+      ...summarizeSubscriptions(rows(watchStore.watchlistAll())),
       warnings: data.warnings,
       truncated: data.truncated,
       error,
@@ -20,10 +21,28 @@ export function createSubscriptionsController({ createClient, rebuild, respond, 
     if (!createClient) return;
     const version = ++generation;
     try {
+      const before = watchStore.watchlistAll();
       client ??= createClient();
-      const fetched = await client.fetchSubscriptions(options);
+      const discovered = await client.fetchSubscriptions(options);
       if (version !== generation) return;
-      data = fetched;
+      const surviving = (entries) => discovered.threads.filter((thread) => !(thread.url in before) || thread.url in entries);
+      const draft = { ...watchStore.watchlistAll() };
+      mergeDiscovered(draft, surviving(draft), new Date());
+      const targets = Object.values(draft).filter((entry) => !entry.removedAt);
+      const tracked = options?.stateClient?.fetchTrackedSubjects && targets.length
+        ? await options.stateClient.fetchTrackedSubjects(targets)
+        : { subjects: new Map(), warnings: [] };
+      if (version !== generation) return;
+
+      // Synchronous from here: re-read the store so acknowledges and removals made during the awaits survive.
+      const entries = { ...watchStore.watchlistAll() };
+      const now = new Date();
+      const added = mergeDiscovered(entries, surviving(entries), now);
+      applyTracked(entries, tracked.subjects);
+      settleAdded(entries, added);
+      prune(entries, now);
+      watchStore.replaceWatch(entries);
+      data = { warnings: [...discovered.warnings, ...tracked.warnings], truncated: discovered.truncated };
       error = null;
     } catch (cause) {
       if (version === generation) error = cause.message;
@@ -52,7 +71,7 @@ export function createSubscriptionsController({ createClient, rebuild, respond, 
     generation++;
     // Retire all old caches too: an in-flight REST response may repopulate them after DELETE.
     client = null;
-    data = { ...data, threads: data.threads.filter((item) => item.url !== thread.url) };
+    watchStore.deleteWatch(thread.url);
     rebuild();
     return respond();
   }

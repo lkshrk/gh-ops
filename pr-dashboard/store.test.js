@@ -79,7 +79,7 @@ test('dashboard store starts empty for missing and malformed state files', () =>
   assert.deepEqual(malformedStore.doneAll(), {});
   assert.deepEqual(malformedStore.watchlistAll(), {});
   assert.equal(malformed.errors.length, 1);
-  assert.equal(malformed.errors[0].message, 'could not read done flags, starting empty');
+  assert.equal(malformed.errors[0].message, 'could not read dashboard state, starting empty');
   rmSync(malformed.dir, { recursive: true });
 });
 

@@ -82,7 +82,7 @@ test('subscription 404 and false/ignored disappear; 403 and 5xx remain unknown w
   expect(result.warnings).toHaveLength(2);
 });
 
-test('unknown subscriptions survive old known closures while confirmed old subscriptions are hidden', async () => {
+test('subscription lookup failures keep threads with unknown subscription next to confirmed old closures', async () => {
   const c = client(async (url) => {
     if (!url.includes('/subscription')) return json([notification(1), notification(2, 'PullRequest'), notification(3)]);
     const id = url.match(/threads\/(\d+)/)[1];
@@ -95,10 +95,10 @@ test('unknown subscriptions survive old known closures while confirmed old subsc
   }) });
   expect(result.threads.map(({ subscribed }) => subscribed)).toEqual([null, null, true]);
   expect(result.warnings).toHaveLength(2);
-  const summary = dashboard.summarizeSubscriptions(result.threads, { now: new Date('2026-10-27T12:00:00Z') });
-  expect(summary.items.map(({ id }) => id)).toEqual(['1', '2']);
-  expect(summary.unread).toBe(2);
-  expect(summary.hidden).toBe(1);
+  const summary = dashboard.summarizeSubscriptions(result.threads);
+  expect(summary.items.map(({ id }) => id)).toEqual(['1', '2', '3']);
+  expect(summary.unread).toBe(3);
+  expect(summary.hidden).toBe(0);
 });
 
 test('caps discovery at ten pages and thirty candidate subjects with explicit truncation', async () => {
@@ -248,8 +248,7 @@ test('unsubscribe validates IDs, accepts empty 204, invalidates subscription cac
   ]);
 });
 
-test('summary hides only closures strictly older than seven days and counts visible unread', () => {
-  const now = new Date('2026-10-27T12:00:00.000Z');
+test('summary keeps every item in the given order and counts unread', () => {
   const rows = [
     { id: 'boundary', state: 'CLOSED', closedAt: '2026-10-20T12:00:00.000Z', unread: true },
     { id: 'old', state: 'CLOSED', closedAt: '2026-10-20T11:59:59.999Z', unread: true },
@@ -261,10 +260,10 @@ test('summary hides only closures strictly older than seven days and counts visi
     { id: 'invalid-date', state: 'CLOSED', closedAt: 'invalid', unread: false },
   ];
   expect(dashboard.summarizeSubscriptions).toBeFunction();
-  const result = dashboard.summarizeSubscriptions(rows.map((row) => ({ ...row, subscribed: true })), { now });
-  expect(result.items.map((r) => r.id)).toEqual(['boundary', 'recent-merge', 'reopened', 'unknown-date', 'unknown-state', 'invalid-date']);
-  expect(result.unread).toBe(3);
-  expect(result.hidden).toBe(2);
+  const result = dashboard.summarizeSubscriptions(rows);
+  expect(result.items).toEqual(rows);
+  expect(result.unread).toBe(5);
+  expect(result.hidden).toBe(0);
   expect(rows).toHaveLength(8);
 });
 

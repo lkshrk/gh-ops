@@ -68,6 +68,7 @@ const subscriptions = createSubscriptionsController({
   createClient: process.env.NOTIFICATIONS_TOKEN
     ? () => createGitHubClient({ token: process.env.NOTIFICATIONS_TOKEN, logger: logger.child({ section: 'subscriptions' }) })
     : null,
+  watchStore: dashboardStore,
   rebuild: rebuildSnapshot,
   respond: dataResponse,
   json,

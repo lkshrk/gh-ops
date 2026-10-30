@@ -1,9 +1,14 @@
 import { expect, test } from 'bun:test';
 import { buildSnapshot } from './dashboard.js';
 import { createGitHubClient } from './github.js';
+import { createDashboardStore } from './store.js';
 import * as subscriptions from './subscriptions-server.js';
+import { acknowledge, markRemoved } from './watchlist.js';
 
-const row = { id: '42', url: 'https://github.com/other/repo/issues/1', repo: 'other/repo', owner: 'other', number: 1, type: 'Issue', title: 'Issue', unread: true, subscribed: true, state: 'OPEN', closedAt: null, mergedAt: null };
+const row = { id: '42', url: 'https://github.com/other/repo/issues/1', repo: 'other/repo', owner: 'other', number: 1, type: 'Issue', title: 'Issue', authored: false, unread: true, updatedAt: '2026-10-27T00:00:00Z', subscribed: true, state: 'OPEN', closedAt: null, mergedAt: null };
+const visible = ({ id, url, repo, owner, number, title, type, state, authored, unread, subscribed, updatedAt, closedAt }) => ({
+  id, url, repo, owner, number, title, type, state, authored: Boolean(authored), unread, subscribed, updatedAt, closedAt, mergedAt: null,
+});
 const result = (threads = [row]) => ({ threads, warnings: [], truncated: false });
 const request = (body = { url: row.url }, headers = {}, method = 'POST') => new Request('http://dashboard/subscriptions/unsubscribe', {
   method, headers: { 'content-type': 'application/json', 'sec-fetch-site': 'same-origin', ...headers },
@@ -11,14 +16,14 @@ const request = (body = { url: row.url }, headers = {}, method = 'POST') => new 
 });
 const deferred = () => { let resolve; const promise = new Promise((r) => { resolve = r; }); return { promise, resolve }; };
 
-function harness(createClient) {
+function harness(createClient, watchStore = createDashboardStore({ logger: { error() {} } })) {
   let snapshot;
   const rebuild = () => {
     snapshot = buildSnapshot({ viewer: 'me', repos: [], openPullRequests: [], closedPullRequests: [], subscriptions: controller.snapshot() });
   };
-  const controller = subscriptions.createSubscriptionsController({ createClient, rebuild, respond: () => Response.json(snapshot) });
+  const controller = subscriptions.createSubscriptionsController({ createClient, rebuild, respond: () => Response.json(snapshot), watchStore });
   rebuild();
-  return { controller, rebuild, snapshot: () => snapshot };
+  return { controller, rebuild, snapshot: () => snapshot, store: watchStore };
 }
 
 test('missing notifications credentials produce an empty unavailable section without blocking a snapshot', async () => {
@@ -47,7 +52,7 @@ test('discovery failures stay in subscriptions, retain previous rows, and recove
   fail = true;
   await refresh();
   expect(h.snapshot().subscriptions.error).toBe('notifications denied');
-  expect(h.snapshot().subscriptions.items).toEqual([row]);
+  expect(h.snapshot().subscriptions.items).toEqual([visible(row)]);
   expect((await h.controller.unsubscribe(request())).status).toBe(503);
   expect(mutations).toBe(0);
   expect(h.snapshot().subscriptions.canUnsubscribe).toBe(false);
@@ -63,12 +68,12 @@ test('discovery failures stay in subscriptions, retain previous rows, and recove
   expect(mutations).toBe(1);
 });
 
-test('unknown subscription rows survive old closure and cannot be unsubscribed', async () => {
+test('closed unread rows with unknown subscription stay visible and cannot be unsubscribed', async () => {
   const unknown = { ...row, subscribed: null, state: 'CLOSED', closedAt: '2020-01-01T00:00:00Z' };
   let mutations = 0;
   const h = harness(() => ({ fetchSubscriptions: async () => result([unknown]), unsubscribe: async () => { mutations++; } }));
   await h.controller.refresh({}); h.rebuild();
-  expect(h.snapshot().subscriptions.items).toEqual([unknown]);
+  expect(h.snapshot().subscriptions.items).toEqual([visible(unknown)]);
   expect(h.snapshot().subscriptions.unread).toBe(1);
   expect((await h.controller.unsubscribe(request())).status).toBe(404);
   expect(mutations).toBe(0);
@@ -79,14 +84,14 @@ test('authored rows without a notification thread are shown but cannot be unsubs
   let mutations = 0;
   const h = harness(() => ({ fetchSubscriptions: async () => result([authored]), unsubscribe: async () => { mutations++; } }));
   await h.controller.refresh({}); h.rebuild();
-  expect(h.snapshot().subscriptions.items).toEqual([authored]);
+  expect(h.snapshot().subscriptions.items).toEqual([visible(authored)]);
   expect((await h.controller.unsubscribe(request())).status).toBe(404);
   expect(mutations).toBe(0);
 });
 
 test('request guards and current visible URL membership reject unsafe mutations', async () => {
   let mutations = 0;
-  const hidden = { ...row, id: '43', url: `${row.url}0`, state: 'CLOSED', closedAt: '2020-01-01T00:00:00Z' };
+  const hidden = { ...row, id: '43', url: `${row.url}0`, unread: false, state: 'CLOSED', closedAt: '2020-01-01T00:00:00Z' };
   const h = harness(() => ({ fetchSubscriptions: async () => result([row, hidden]), unsubscribe: async () => { mutations++; } }));
   await h.controller.refresh({}); h.rebuild();
   for (const [req, status] of [
@@ -99,7 +104,8 @@ test('request guards and current visible URL membership reject unsafe mutations'
     [request({ url: hidden.url }), 404],
   ]) expect((await h.controller.unsubscribe(req)).status).toBe(status);
   expect(mutations).toBe(0);
-  expect(h.snapshot().subscriptions.hidden).toBe(1);
+  expect(h.snapshot().subscriptions.items.map(({ url }) => url)).toEqual([row.url]);
+  expect(h.snapshot().subscriptions.hidden).toBe(0);
 });
 
 test('failed DELETE retains the row; success removes it immediately and returns the full snapshot', async () => {
@@ -111,7 +117,7 @@ test('failed DELETE retains the row; success removes it immediately and returns 
   } }));
   await h.controller.refresh({}); h.rebuild();
   expect((await h.controller.unsubscribe(request())).status).toBe(502);
-  expect(h.snapshot().subscriptions.items).toEqual([row]);
+  expect(h.snapshot().subscriptions.items).toEqual([visible(row)]);
   fail = false;
   const response = await h.controller.unsubscribe(request({ url: row.url, id: '999' }));
   expect(response.status).toBe(200);
@@ -165,6 +171,69 @@ test('successive unsubscribes use fresh clients and can remove different current
   expect((await h.controller.unsubscribe(request({ url: other.url }))).status).toBe(200);
   expect(h.snapshot().subscriptions.items).toEqual([]);
   expect(ids).toEqual(['42', '43']);
+});
+
+const tracker = (subjects = {}) => {
+  const calls = [];
+  return { calls, fetchTrackedSubjects: async (entries) => {
+    calls.push(entries.map(({ url }) => url));
+    return { subjects: new Map(entries.map(({ url }) => [url, subjects[url] ?? { title: 'Issue', updatedAt: row.updatedAt, state: 'OPEN', closedAt: null, subscribed: true }])), warnings: ['tracked warning'] };
+  } };
+};
+const update = (store, change) => { const entries = { ...store.watchlistAll() }; const result = change(entries); store.replaceWatch(entries); return result; };
+
+test('a previously discovered open entry stays when a later discovery no longer returns it', async () => {
+  let threads = [row];
+  const stateClient = tracker();
+  const h = harness(() => ({ fetchSubscriptions: async () => result(threads) }));
+  await h.controller.refresh({ stateClient }); h.rebuild();
+  expect(h.snapshot().subscriptions.items).toEqual([visible(row)]);
+  threads = [];
+  await h.controller.refresh({ stateClient }); h.rebuild();
+  expect(h.snapshot().subscriptions.items).toEqual([visible(row)]);
+  expect(h.snapshot().subscriptions.warnings).toEqual(['tracked warning']);
+  expect(stateClient.calls).toEqual([[row.url], [row.url]]);
+  expect(Object.keys(h.store.watchlistAll())).toEqual([row.url]);
+});
+
+test('acknowledge, remove and closed deletion during an in-flight refresh are not undone', async () => {
+  const removed = { ...row, id: '43', url: `${row.url}0` };
+  const closed = { ...row, id: '44', url: `${row.url}1`, state: 'CLOSED', closedAt: row.updatedAt };
+  const threads = [row, removed, closed];
+  let pending = null;
+  const stateClient = tracker({ [closed.url]: { title: 'Issue', updatedAt: row.updatedAt, state: 'CLOSED', closedAt: row.updatedAt, subscribed: true } });
+  const h = harness(() => ({ fetchSubscriptions: async () => { if (pending) await pending.promise; return result(threads); } }));
+  await h.controller.refresh({ stateClient }); h.rebuild();
+  expect(h.snapshot().subscriptions.items.map(({ url, unread }) => [url, unread])).toEqual([[row.url, true], [removed.url, true], [closed.url, true]]);
+
+  pending = deferred();
+  const inflight = h.controller.refresh({ stateClient });
+  expect(update(h.store, (entries) => acknowledge(entries, row.url))).toBe(true);
+  expect(update(h.store, (entries) => markRemoved(entries, removed.url, new Date('2026-10-28T00:00:00Z')))).toBe(true);
+  expect(update(h.store, (entries) => acknowledge(entries, closed.url))).toBe(true);
+  pending.resolve();
+  await inflight; h.rebuild();
+
+  expect(h.snapshot().subscriptions.items).toEqual([visible({ ...row, unread: false })]);
+  expect(h.snapshot().subscriptions.unread).toBe(0);
+  expect(h.store.watchlistAll()[row.url].seenUpdatedAt).toBe(row.updatedAt);
+  expect(h.store.watchlistAll()[removed.url].removedAt).toBe('2026-10-28T00:00:00.000Z');
+  expect(closed.url in h.store.watchlistAll()).toBe(false);
+  expect(stateClient.calls[1]).toEqual([row.url]);
+});
+
+test('discovery error keeps stored rows and skips the merge', async () => {
+  const store = createDashboardStore({ logger: { error() {} } });
+  const stateClient = tracker();
+  const seeded = harness(() => ({ fetchSubscriptions: async () => result([row]) }), store);
+  await seeded.controller.refresh({ stateClient });
+  const h = harness(() => ({ fetchSubscriptions: async () => { throw new Error('notifications denied'); } }), store);
+  h.rebuild();
+  expect(h.snapshot().subscriptions.items).toEqual([visible(row)]);
+  await h.controller.refresh({ stateClient }); h.rebuild();
+  expect(h.snapshot().subscriptions.error).toBe('notifications denied');
+  expect(h.snapshot().subscriptions.items).toEqual([visible(row)]);
+  expect(stateClient.calls).toHaveLength(1);
 });
 
 for (const notifications of ['absent', 'failing']) {

@@ -11,7 +11,7 @@ function createDashboardStore({ file = null, logger }) {
         ? { done: saved.done || {}, watchlist: saved.watchlist || {} }
         : { done: saved, watchlist: {} };
     } catch (error) {
-      if (error.code !== 'ENOENT') logger.error('could not read done flags, starting empty', { file, error });
+      if (error.code !== 'ENOENT') logger.error('could not read dashboard state, starting empty', { file, error });
     }
   }
 
@@ -39,7 +39,7 @@ function createDashboardStore({ file = null, logger }) {
   }
 
   return {
-    doneAll: () => state.done,
+    doneAll: () => ({ ...state.done }),
     setDone(url, entry) {
       set('done', url, entry);
     },
@@ -50,7 +50,7 @@ function createDashboardStore({ file = null, logger }) {
       const entries = Object.fromEntries(Object.entries(state.done).filter(([url, entry]) => keep(url, entry)));
       if (Object.keys(entries).length !== Object.keys(state.done).length) replace('done', entries);
     },
-    watchlistAll: () => state.watchlist,
+    watchlistAll: () => ({ ...state.watchlist }),
     setWatch(url, entry) {
       set('watchlist', url, entry);
     },
@@ -58,7 +58,7 @@ function createDashboardStore({ file = null, logger }) {
       deleteEntry('watchlist', url);
     },
     replaceWatch(entries) {
-      replace('watchlist', entries);
+      replace('watchlist', { ...entries });
     },
   };
 }

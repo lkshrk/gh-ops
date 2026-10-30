@@ -51,7 +51,7 @@ Gateway handles OIDC with Authentik.
 | `REFRESH_INTERVAL_MS` | `60000` | How often to poll GitHub. |
 | `FAIL_STREAK` | `3` | Consecutive failed runs that count as constantly failing. |
 | `RENOVATE_BRANCH_PREFIX` | `renovate/` | Head branch prefix of Renovate pull requests. |
-| `CLOSED_WINDOW_DAYS` | `30` | How far back Contributions' *Recently closed* reaches; Subscriptions uses a fixed seven-day window. |
+| `CLOSED_WINDOW_DAYS` | `30` | How far back Contributions' *Recently closed* reaches. |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error`. |
 | `STATE_FILE` | — | JSON file that keeps *Done* flags across restarts. Unset keeps them in memory only. |
 
@@ -96,21 +96,21 @@ supplies this variable.
   Mentions, assignments, repository watching and other notification reasons do not qualify;
   authored pull requests belong to Contributions. This is notification-based discovery, **not an
   inventory of every historical subscription**: a subscription without an available matching
-  notification cannot be found. If GitHub relabels a manually subscribed thread's notification
-  from `manual` to `mention`, its existing row disappears on the next successful discovery.
+  notification cannot be found.
 - Open issues and discussions you authored outside those owners are also found by search with
   the viewer token (up to **50** of each, truncation reported), skipping subjects you
   unsubscribed from or ignore. Rows found only this way have no notification thread, so they
-  show no Unsubscribe button and leave the list once closed.
+  show no Unsubscribe button.
 - Each distinct subject's thread subscription is checked. Unsubscribed, ignored and `404`
   subscriptions are omitted. Failed or inconclusive checks remain visible as **Unknown
   subscription**, with warnings and no Unsubscribe button.
-- Confirmed subscriptions closed or merged more than **seven days** ago are hidden, using the
-  subject's actual closure/merge time. Exactly seven days old is retained. Open subjects, unknown
-  subscription status, unknown subject state, and missing/invalid closure dates stay visible.
-  The hidden count reports this age filter; unread counts cover visible rows.
+- Discovered subjects are kept in a durable watchlist in `STATE_FILE` and re-checked directly
+  each cycle, so a row stays after it is read or drops out of discovery. A row is unread when the
+  subject was updated, or its notification is unread, after you last saw it. Unread rows sort
+  first, then by latest update. A row leaves once its subject is closed and seen, or once you
+  unsubscribe (here or on GitHub). A subject that can't be looked up shows **Unknown state**.
 - Discovery stops at **10 notification pages** or **30 distinct candidate subjects**.
-  These limits apply before subscription/age filtering, so fewer rows may remain; six is only
+  These limits apply before subscription filtering, so fewer rows may remain; six is only
   the GraphQL lookup batch size, not a display limit. Partial results carry a truncation warning.
 - Without `NOTIFICATIONS_TOKEN`, no notification requests are made and Unsubscribe is disabled.
   Discovery errors are isolated to this tab, which retains previous data when available and
