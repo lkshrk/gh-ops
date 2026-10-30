@@ -18,7 +18,7 @@ const stateClient = (subjects = {}) => createGitHubClient({ token: 'test-viewer'
   const { query } = JSON.parse(init.body);
   const data = {};
   for (const match of query.matchAll(/(repo\d+): repository/g)) {
-    data[match[1]] = { subject: subjects[match[1]] || { state: 'OPEN', closedAt: null, mergedAt: null } };
+    data[match[1]] = { subject: subjects[match[1]] || { state: 'OPEN', closedAt: null } };
   }
   return json({ data });
 } });
@@ -36,13 +36,13 @@ test('follows short Link pages; filters manual external supported subjects and d
     ]);
     return json([notification(1)], 200, { Link: `<${API}/notifications?all=true&participating=true&per_page=100&page=2>; rel="next"` });
   });
-  const result = await c.fetchSubscriptions({ excludeOwners: ['me'], stateClient: stateClient({ repo2: { closed: true, closedAt: '2026-10-25T00:00:00Z' } }) });
-  expect(result.threads.map((t) => t.id)).toEqual(['1', '2', '3']);
-  expect(result.threads[0]).toEqual({ id: '1', url: 'https://github.com/other/project/issues/1', repo: 'other/project', owner: 'other', number: 1, title: 'Subject 1', type: 'Issue', authored: false, unread: true, updatedAt: '2026-10-26T00:00:00Z', subscribed: true, state: 'OPEN', closedAt: null, mergedAt: null });
-  expect(result.threads[2].state).toBe('CLOSED');
+  const result = await c.fetchSubscriptions({ excludeOwners: ['me'], stateClient: stateClient() });
+  expect(result.threads.map((t) => t.id)).toEqual(['1', '3']);
+  expect(result.threads[0]).toEqual({ id: '1', url: 'https://github.com/other/project/issues/1', repo: 'other/project', owner: 'other', number: 1, title: 'Subject 1', type: 'Issue', authored: false, unread: true, updatedAt: '2026-10-26T00:00:00Z', subscribed: true, state: null, closedAt: null });
+  expect(result.threads[1].url).toBe('https://github.com/other/project/discussions/3');
   expect(result.warnings).toEqual([]);
   expect(result.truncated).toBe(false);
-  expect(requested.filter((url) => url.includes('/subscription'))).toHaveLength(3);
+  expect(requested.filter((url) => url.includes('/subscription'))).toHaveLength(2);
   expect(new URL(requested[0]).searchParams.get('all')).toBe('true');
   expect(new URL(requested[0]).searchParams.get('participating')).toBe('true');
   expect(new URL(requested[0]).searchParams.get('per_page')).toBe('100');
@@ -88,17 +88,11 @@ test('subscription lookup failures keep threads with unknown subscription next t
     const id = url.match(/threads\/(\d+)/)[1];
     return id === '1' ? json({}, 403) : id === '2' ? json({}, 503) : json({ subscribed: true });
   });
-  const result = await c.fetchSubscriptions({ stateClient: stateClient({
-    repo0: { state: 'CLOSED', closedAt: '2020-01-01T00:00:00Z' },
-    repo1: { state: 'MERGED', mergedAt: '2020-01-01T00:00:00Z' },
-    repo2: { state: 'CLOSED', closedAt: '2020-01-01T00:00:00Z' },
-  }) });
-  expect(result.threads.map(({ subscribed }) => subscribed)).toEqual([null, null, true]);
-  expect(result.warnings).toHaveLength(2);
+  const result = await c.fetchSubscriptions({ stateClient: stateClient() });
+  expect(result.threads.map(({ subscribed }) => subscribed)).toEqual([null, true]);
+  expect(result.warnings).toHaveLength(1);
   const summary = dashboard.summarizeSubscriptions(result.threads);
-  expect(summary.items.map(({ id }) => id)).toEqual(['1', '2', '3']);
-  expect(summary.unread).toBe(3);
-  expect(summary.hidden).toBe(0);
+  expect(summary).toEqual({ items: result.threads, unread: 2 });
 });
 
 test('caps discovery at ten pages and thirty candidate subjects with explicit truncation', async () => {
@@ -137,61 +131,39 @@ test('rejects external/mismatched subject URLs and external pagination without f
   expect(result.warnings.length).toBeGreaterThan(0);
 });
 
-test('keeps inaccessible subject state unknown with a warning; never needs notification-token GraphQL', async () => {
-  const c = client(async (url) => url.includes('/subscription') ? json({ subscribed: true }) : json([notification(1)]));
-  const logs = [];
-  const logger = createLogger({ level: 'warn', write: (line) => logs.push(JSON.parse(line)) });
-  const inaccessible = createGitHubClient({ token: 'viewer', logger, fetchImpl: async () => json({ data: { repo0: null }, errors: [{ message: 'not accessible' }] }) });
-  const result = await c.fetchSubscriptions({ stateClient: inaccessible });
-  expect(result.threads[0].state).toBeNull();
-  expect(result.warnings.length).toBeGreaterThan(0);
-  expect(logs).toHaveLength(1);
-  expect(logs[0]).toMatchObject({
-    level: 'warn', msg: 'GitHub returned partial data', operation: 'subscription-subjects',
-    graphqlErrors: [{ message: 'not accessible' }],
-  });
-});
-
-test('a viewer lookup failure preserves threads, and a missing viewer never falls back to notification GraphQL', async () => {
+test('discovery leaves subject state to the tracked lookup and never queries GraphQL without a viewer', async () => {
   const requests = [];
   const c = client(async (url) => {
     requests.push(url);
-    return url.includes('/subscription') ? json({ subscribed: true }) : json([notification(1)]);
+    return url.includes('/subscription') ? json({ subscribed: true }) : json([notification(1), notification(2, 'Discussion')]);
   });
-  const failingViewer = createGitHubClient({ token: 'viewer', fetchImpl: async () => json({}, 403) });
-  for (const viewer of [failingViewer, undefined]) {
-    const result = await c.fetchSubscriptions({ stateClient: viewer });
-    expect(result.threads[0]).toMatchObject({ subscribed: true, state: null, closedAt: null, mergedAt: null });
-    expect(result.warnings.length).toBeGreaterThan(0);
+  let viewerCalls = 0;
+  const viewerClient = createGitHubClient({ token: 'viewer', fetchImpl: async () => { viewerCalls++; return json({}, 403); } });
+  for (const stateClient of [viewerClient, undefined]) {
+    const result = await c.fetchSubscriptions({ stateClient });
+    expect(result.threads.map(({ state, closedAt }) => [state, closedAt])).toEqual([[null, null], [null, null]]);
+    expect(result.warnings).toEqual([]);
   }
+  expect(viewerCalls).toBe(0);
   expect(requests.every((url) => !url.endsWith('/graphql'))).toBe(true);
+});
+
+test('pull request notifications are skipped before any subscription check', async () => {
+  const requested = [];
+  const c = client(async (url) => {
+    requested.push(url);
+    return url.includes('/subscription') ? json({ subscribed: true }) : json([
+      notification(1, 'PullRequest'), notification(2, 'PullRequest', { reason: 'author' }), notification(3),
+    ]);
+  });
+  const result = await c.fetchSubscriptions({ stateClient: stateClient() });
+  expect(result.threads.map(({ id }) => id)).toEqual(['3']);
+  expect(requested.filter((url) => url.includes('/subscription'))).toEqual([`${API}/notifications/threads/3/subscription`]);
 });
 
 test('discovery failures propagate for the caller to isolate from other dashboard data', async () => {
   await expect(client(async () => json({}, 403)).fetchSubscriptions({ stateClient: stateClient() }))
     .rejects.toMatchObject({ status: 403, operation: 'notifications' });
-});
-
-test('enrichment batches subjects and requests the documented fields for each type', async () => {
-  const queries = [];
-  const viewer = createGitHubClient({ token: 'viewer', fetchImpl: async (url, init) => {
-    const { query } = JSON.parse(init.body);
-    queries.push(query);
-    return json({ data: {
-      repo0: { subject: { state: 'MERGED', closedAt: '2026-10-22T00:00:00Z', mergedAt: '2026-10-22T00:00:00Z' } },
-      repo1: { subject: { closed: false, closedAt: null } },
-    } });
-  } });
-  const c = client(async (url) => url.includes('/subscription') ? json({ subscribed: true }) : json([
-    notification(1, 'PullRequest'), notification(2, 'Discussion'),
-  ]));
-  const result = await c.fetchSubscriptions({ stateClient: viewer });
-  expect(queries).toHaveLength(1);
-  expect(queries[0]).toContain('subject: pullRequest(number: 1) { state closedAt mergedAt }');
-  expect(queries[0]).toContain('subject: discussion(number: 2) { closed closedAt }');
-  expect(result.threads.map(({ state, mergedAt }) => ({ state, mergedAt }))).toEqual([
-    { state: 'MERGED', mergedAt: '2026-10-22T00:00:00Z' }, { state: 'OPEN', mergedAt: null },
-  ]);
 });
 
 test('obeys poll interval, reuses 304 body and Link, and uses Last-Modified without assuming ETags', async () => {
@@ -263,7 +235,7 @@ test('summary keeps every item in the given order and counts unread', () => {
   const result = dashboard.summarizeSubscriptions(rows);
   expect(result.items).toEqual(rows);
   expect(result.unread).toBe(5);
-  expect(result.hidden).toBe(0);
+  expect(result).not.toHaveProperty('hidden');
   expect(rows).toHaveLength(8);
 });
 
@@ -272,7 +244,7 @@ const authoredNode = (repo, number, viewerSubscription = 'SUBSCRIBED') => ({
 });
 const authoredClient = (data, seen = []) => createGitHubClient({ token: 'test-viewer', fetchImpl: async (_url, init) => {
   const { query, variables } = JSON.parse(init.body);
-  if (!query.includes('search(')) return json({ data: await stateClient().graphql('subscription-subjects', query) });
+  if (!query.includes('search(')) throw new Error(`unexpected query ${query}`);
   seen.push(variables);
   if (data instanceof Error) return json({ message: data.message }, 502);
   return json({ data });
@@ -319,7 +291,7 @@ test('authored open issues and discussions are added once, skipping unsubscribed
   expect(result.threads[1]).toEqual({
     id: null, url: 'https://github.com/upstream/tool/issues/8', repo: 'upstream/tool', owner: 'upstream', number: 8,
     title: 'Authored 8', type: 'Issue', authored: true, unread: false, updatedAt: '2026-10-27T00:00:00Z',
-    subscribed: true, state: 'OPEN', closedAt: null, mergedAt: null,
+    subscribed: true, state: 'OPEN', closedAt: null,
   });
   expect(result.threads[2].subscribed).toBeNull();
   expect(result.warnings).toEqual([]);
@@ -352,7 +324,7 @@ const trackedClient = (resolve, queries = []) => createGitHubClient({ token: 'te
   }
   return json({ data });
 } });
-const unknownSubject = { title: null, updatedAt: null, state: null, closedAt: null, subscribed: null };
+const unknownSubject = { title: null, updatedAt: null, state: null, closedAt: null, subscribed: null, activityAt: null };
 
 test('tracked subjects are looked up in batches with per-type fields', async () => {
   const queries = [];
@@ -360,8 +332,9 @@ test('tracked subjects are looked up in batches with per-type fields', async () 
   const c = trackedClient(() => ({ subject: { title: 't', updatedAt: '2026-10-01T00:00:00Z', state: 'OPEN', closed: false, closedAt: null, viewerSubscription: 'SUBSCRIBED' } }), queries);
   const result = await c.fetchTrackedSubjects(entries);
   expect(queries).toHaveLength(2);
-  expect(queries[0]).toContain('issue(number: 1) { title updatedAt state closedAt viewerSubscription }');
-  expect(queries[0]).toContain('discussion(number: 2) { title updatedAt closed closedAt viewerSubscription }');
+  const lastComment = 'comments(last: 1) { nodes { createdAt author { login } } }';
+  expect(queries[0]).toContain(`issue(number: 1) { title updatedAt state closedAt viewerSubscription ${lastComment} }`);
+  expect(queries[0]).toContain(`discussion(number: 2) { title updatedAt closed closedAt viewerSubscription ${lastComment} }`);
   expect(queries[0]).toContain('repo5:');
   expect(queries[0]).not.toContain('repo6:');
   expect(queries[1].match(/repository\(/g)).toHaveLength(1);
@@ -464,4 +437,26 @@ test('a tracked alias that is null alongside GraphQL errors stays unknown withou
   const { subjects, warnings } = await c.fetchTrackedSubjects([entry]);
   expect(subjects.get(entry.url)).toEqual(unknownSubject);
   expect(warnings).toEqual(['Tracked subject a/b#1 unavailable.']);
+});
+
+test('tracked activity is the later of closure and the last comment by someone other than the viewer', async () => {
+  const comment = (login, createdAt = '2026-10-05T00:00:00Z') => ({ nodes: [{ createdAt, author: login === null ? null : { login } }] });
+  const nodes = {
+    1: { state: 'OPEN', closedAt: null, comments: comment('Octo') },
+    2: { state: 'OPEN', closedAt: null, comments: comment('someone') },
+    3: { state: 'CLOSED', closedAt: '2026-10-07T00:00:00Z', comments: comment('octo') },
+    4: { state: 'CLOSED', closedAt: '2026-10-03T00:00:00Z', comments: comment('someone') },
+    5: { closed: false, closedAt: null, comments: comment(null) },
+    6: { state: 'OPEN', closedAt: null, comments: { nodes: [] } },
+  };
+  const entries = [1, 2, 3, 4, 6].map((n) => tracked('a/b', n)).concat(tracked('a/b', 5, 'Discussion'));
+  const c = trackedClient((_repo, number) => ({ subject: { title: 't', updatedAt: '2026-10-09T00:00:00Z', ...nodes[number] } }));
+  const { subjects } = await c.fetchTrackedSubjects(entries, { viewer: 'OCTO' });
+  const activity = (n, type) => subjects.get(tracked('a/b', n, type).url).activityAt;
+  expect(activity(1)).toBeNull();
+  expect(activity(2)).toBe('2026-10-05T00:00:00Z');
+  expect(activity(3)).toBe('2026-10-07T00:00:00Z');
+  expect(activity(4)).toBe('2026-10-05T00:00:00Z');
+  expect(activity(5, 'Discussion')).toBe('2026-10-05T00:00:00Z');
+  expect(activity(6)).toBeNull();
 });

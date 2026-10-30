@@ -5,9 +5,9 @@ import { createDashboardStore } from './store.js';
 import * as subscriptions from './subscriptions-server.js';
 import { acknowledge, markRemoved } from './watchlist.js';
 
-const row = { id: '42', url: 'https://github.com/other/repo/issues/1', repo: 'other/repo', owner: 'other', number: 1, type: 'Issue', title: 'Issue', authored: false, unread: true, updatedAt: '2026-10-27T00:00:00Z', subscribed: true, state: 'OPEN', closedAt: null, mergedAt: null };
+const row = { id: '42', url: 'https://github.com/other/repo/issues/1', repo: 'other/repo', owner: 'other', number: 1, type: 'Issue', title: 'Issue', authored: false, unread: true, updatedAt: '2026-10-27T00:00:00Z', subscribed: true, state: 'OPEN', closedAt: null };
 const visible = ({ id, url, repo, owner, number, title, type, state, authored, unread, subscribed, updatedAt, closedAt }) => ({
-  id, url, repo, owner, number, title, type, state, authored: Boolean(authored), unread, subscribed, updatedAt, closedAt, mergedAt: null,
+  id, url, repo, owner, number, title, type, state, authored: Boolean(authored), unread, subscribed, updatedAt, closedAt,
 });
 const result = (threads = [row]) => ({ threads, warnings: [], truncated: false });
 const request = (body = { url: row.url }, headers = {}, method = 'POST') => new Request('http://dashboard/subscriptions/remove', {
@@ -32,7 +32,7 @@ test('missing notifications credentials produce an empty unavailable section wit
   h.rebuild();
   expect(h.snapshot().viewer).toBe('me');
   expect(h.snapshot().contributions).toEqual({ attention: [], open: [], closed: [] });
-  expect(h.snapshot().subscriptions).toEqual({ items: [], unread: 0, hidden: 0, warnings: [], truncated: false, error: null, canUnsubscribe: false });
+  expect(h.snapshot().subscriptions).toEqual({ items: [], unread: 0, warnings: [], truncated: false, error: null, canUnsubscribe: false });
   expect((await h.controller.remove(request())).status).toBe(404);
   expect((await h.controller.acknowledge(request())).status).toBe(404);
 });
@@ -120,7 +120,6 @@ test('request guards and current visible URL membership reject unsafe mutations'
   ]) expect((await h.controller[endpoint](req)).status).toBe(status);
   expect(mutations).toBe(0);
   expect(h.snapshot().subscriptions.items.map(({ url }) => url)).toEqual([row.url]);
-  expect(h.snapshot().subscriptions.hidden).toBe(0);
 });
 
 test('failed DELETE retains the row and store; success removes it immediately and returns the full snapshot', async () => {
@@ -380,3 +379,82 @@ for (const notifications of ['absent', 'failing']) {
     expect(snapshot.subscriptions.canUnsubscribe).toBe(false);
   });
 }
+
+test('an unchanged watchlist is not written again', async () => {
+  const store = createDashboardStore({ logger: { error() {} } });
+  let writes = 0;
+  const replaceWatch = store.replaceWatch;
+  store.replaceWatch = (entries) => { writes++; replaceWatch(entries); };
+  const stateClient = tracker();
+  const h = harness(() => ({ fetchSubscriptions: async () => result([row]) }), store);
+  await h.controller.refresh({ stateClient });
+  expect(writes).toBe(1);
+  await h.controller.refresh({ stateClient });
+  await h.controller.refresh({ stateClient });
+  expect(writes).toBe(1);
+  stateClient.fetchTrackedSubjects = tracker({ [row.url]: { title: 'Renamed', updatedAt: row.updatedAt, state: 'OPEN', closedAt: null, subscribed: true } }).fetchTrackedSubjects;
+  await h.controller.refresh({ stateClient });
+  expect(writes).toBe(2);
+});
+
+test('an item added while the tracked lookup fails is settled by the next successful lookup', async () => {
+  const quiet = { ...row, unread: false };
+  let fail = true;
+  const viewers = [];
+  const stateClient = { fetchTrackedSubjects: async (entries, options) => {
+    viewers.push(options?.viewer);
+    if (fail) throw new Error('lookup down');
+    return { subjects: new Map(entries.map(({ url }) => [url, { title: 'Issue', updatedAt: '2026-10-29T00:00:00Z', state: 'OPEN', closedAt: null, subscribed: true, activityAt: '2026-10-29T00:00:00Z' }])), warnings: [] };
+  } };
+  const h = harness(() => ({ fetchSubscriptions: async () => result([quiet]) }));
+  await h.controller.refresh({ stateClient, viewer: 'me' }); h.rebuild();
+  expect(h.store.watchlistAll()[row.url].unsettled).toBe(true);
+  fail = false;
+  await h.controller.refresh({ stateClient, viewer: 'me' }); h.rebuild();
+  expect(h.snapshot().subscriptions.items.map(({ unread }) => unread)).toEqual([false]);
+  expect(h.store.watchlistAll()[row.url].seenUpdatedAt).toBe('2026-10-29T00:00:00Z');
+  expect(h.store.watchlistAll()[row.url]).not.toHaveProperty('unsettled');
+  expect(viewers).toEqual(['me', 'me']);
+});
+
+test('one refresh cycle makes one authored search and one tracked lookup per batch, and skips pull requests', async () => {
+  const notifications = [
+    { id: '1', reason: 'manual', unread: false, updated_at: '2026-10-27T00:00:00Z', repository: { full_name: 'other/repo' }, subject: { type: 'Issue', title: 'One', url: 'https://api.github.com/repos/other/repo/issues/1' } },
+    { id: '2', reason: 'manual', unread: false, updated_at: '2026-10-27T00:00:00Z', repository: { full_name: 'other/repo' }, subject: { type: 'PullRequest', title: 'PR', url: 'https://api.github.com/repos/other/repo/pulls/2' } },
+    { id: '3', reason: 'author', unread: false, updated_at: '2026-10-27T00:00:00Z', repository: { full_name: 'other/repo' }, subject: { type: 'Discussion', title: 'Three', url: 'https://api.github.com/repos/other/repo/discussions/3' } },
+  ];
+  const rest = [];
+  const notificationsClient = createGitHubClient({ token: 'notifications', fetchImpl: async (url) => {
+    rest.push(url);
+    return url.includes('/subscription') ? Response.json({ subscribed: true }) : Response.json(notifications);
+  } });
+  const operations = [];
+  const stateClient = createGitHubClient({ token: 'viewer', fetchImpl: async (url, init) => {
+    expect(url).toBe('https://api.github.com/graphql');
+    const { query } = JSON.parse(init.body);
+    if (query.includes('search(')) {
+      operations.push('authored');
+      return Response.json({ data: {
+        issues: { issueCount: 1, nodes: [{ number: 4, title: 'Four', updatedAt: '2026-10-27T00:00:00Z', viewerSubscription: 'SUBSCRIBED', repository: { nameWithOwner: 'up/stream' } }] },
+        discussions: { discussionCount: 0, nodes: [] },
+      } });
+    }
+    operations.push('tracked');
+    const data = {};
+    for (const [, alias] of query.matchAll(/(repo\d+): repository/g)) {
+      data[alias] = { subject: { title: 'T', updatedAt: '2026-10-28T00:00:00Z', state: 'OPEN', closed: false, closedAt: null, viewerSubscription: 'SUBSCRIBED',
+        comments: { nodes: [{ createdAt: '2026-10-28T00:00:00Z', author: { login: 'ME' } }] } } };
+    }
+    return Response.json({ data });
+  } });
+  const h = harness(() => notificationsClient);
+  await h.controller.refresh({ excludeOwners: ['me'], stateClient, viewer: 'me' }); h.rebuild();
+  expect(operations).toEqual(['authored', 'tracked']);
+  expect(rest.filter((url) => url.includes('/subscription'))).toHaveLength(2);
+  expect(h.snapshot().subscriptions.warnings).toEqual([]);
+  expect(h.snapshot().subscriptions.items.map(({ url, state, unread }) => [url, state, unread])).toEqual([
+    ['https://github.com/other/repo/issues/1', 'OPEN', false],
+    ['https://github.com/other/repo/discussions/3', 'OPEN', false],
+    ['https://github.com/up/stream/issues/4', 'OPEN', false],
+  ]);
+});

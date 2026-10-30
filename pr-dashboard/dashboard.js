@@ -109,7 +109,7 @@ function buildContributions(openPullRequests, closedPullRequests, viewer, done =
 }
 
 function summarizeSubscriptions(items) {
-  return { items, unread: items.filter((item) => item.unread).length, hidden: 0 };
+  return { items, unread: items.filter((item) => item.unread).length };
 }
 
 function repoMeta(repo) {
@@ -338,7 +338,7 @@ function ownerOrder(repos, viewer) {
 
 function buildSnapshot({
   viewer, repos, openPullRequests, closedPullRequests, done = {}, options = {}, now = new Date(),
-  subscriptions = { items: [], unread: 0, hidden: 0, warnings: [], truncated: false, error: null, canUnsubscribe: false },
+  subscriptions = { items: [], unread: 0, warnings: [], truncated: false, error: null, canUnsubscribe: false },
 }) {
   return {
     generatedAt: now.toISOString(),

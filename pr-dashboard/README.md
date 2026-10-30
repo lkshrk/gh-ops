@@ -81,7 +81,7 @@ notification access; `repo` grants broader repository access and is not needed j
 Organization access policies still apply.
 
 Subject state is queried with the existing viewer token from `GITHUB_TOKENS`, not the
-notifications token. That token must be able to read the relevant issues, pull requests and
+notifications token. That token must be able to read the relevant issues and
 discussions (including private repository access where needed); inaccessible state is shown as
 unknown rather than inferred from notification timestamps. Credential provisioning is a separate
 operator step. On h-cloud, the optional `NOTIFICATIONS_TOKEN` key in `pr-dashboard-secret`
@@ -94,7 +94,8 @@ owners configured in `GITHUB_TOKENS`. Pull requests are excluded; authored ones 
 Contributions.
 
 - **Discovery.** `/notifications?all=true&participating=true&per_page=100` (read notifications
-  included) is filtered to `reason: manual` and `reason: author` issues and discussions. Open
+  included) is filtered to `reason: manual` and `reason: author` issues and discussions; pull
+  request notifications are skipped before any subscription check. Open
   issues and discussions you authored are also found by search with the viewer token (up to **50**
   of each, truncation reported), skipping subjects you unsubscribed from or ignore. This is
   notification-based discovery, **not an inventory of every historical subscription**: a
@@ -102,11 +103,19 @@ Contributions.
   search have no notification thread.
 - **Persistence.** The watchlist lives in `STATE_FILE` next to the *Done* flags and survives
   restarts; unset means memory only. Each item is re-checked directly every cycle, so it stays
-  after it is read or drops out of discovery.
-- **Unread.** An item is unread when the subject was updated after you last acknowledged it, or
-  when its GitHub notification is unread and newer than that. Newly discovered items start read
-  unless their notification is unread.
-- **Order.** Unread first, then latest update.
+  after it is read or drops out of discovery. The file is rewritten only when the watchlist
+  changes.
+- **Cost per cycle.** Conditional notification page requests, one thread-subscription request
+  per discovered issue or discussion, one GraphQL search for authored subjects, and one GraphQL
+  lookup per six watched items (title, state, subscription and last comment). Discovery itself
+  makes no state lookup.
+- **Unread.** An item is unread when someone else acted on it after you last acknowledged it: a
+  new comment by another user (the latest comment counts) or a closure. An unread GitHub
+  notification newer than your acknowledgement also makes it unread. Your own comments, edits,
+  labels and reactions do not. Items stored before this check, and not yet looked up, fall back
+  to the subject's last update. Newly discovered items start read unless their notification is
+  unread.
+- **Order.** Unread first, then latest update (including your own activity).
 - **Title click.** Acknowledges the item and never blocks navigation. An open item stays as
   read; a closed item disappears and stays gone.
 - **Trash.** Always removes the item. It also unsubscribes the GitHub notification thread
@@ -116,9 +125,10 @@ Contributions.
   can notify again after a comment or @mention, and watching the repository can still produce
   notifications.
 - **Removed items.** They stay gone unless a newer manually subscribed notification arrives. A
-  removed item is forgotten after 180 days without being seen.
-- **Unknown items.** An item GitHub no longer returns shows **Unknown state**. A transient
-  lookup failure keeps the last known state.
+  closed item you have read is retired the same way. A removed item is forgotten after 180 days
+  without being seen.
+- **Unknown items.** An item GitHub no longer returns shows **Unknown state** and is retired
+  after 14 days of unknown results. A transient lookup failure keeps the last known state.
 - **Limits.** Discovery stops at **10 notification pages** or **30 distinct candidate
   subjects**. These limits apply before subscription filtering, so fewer rows may remain; six is
   only the GraphQL lookup batch size, not a display limit. Partial results carry a truncation

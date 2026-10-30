@@ -168,7 +168,7 @@ function renderSubscriptions() {
     error ? `<p class="subscription-notice" role="status">${esc(error)}${items.length ? ' · Showing previously fetched subscriptions.' : ''}</p>` : '',
     ...(warnings || []).map((warning) => `<p class="subscription-notice">${esc(warning)}</p>`),
     truncated ? '<p class="subscription-notice">Results truncated: only part of your subscriptions could be fetched.</p>' : '',
-    items.length ? `<ul class="rows">${items.map(subscriptionRow).join('')}</ul>` : canUnsubscribe && !error ? emptyState('No manual subscriptions to show.') : '',
+    items.length ? `<ul class="rows">${items.map(subscriptionRow).join('')}</ul>` : canUnsubscribe && !error ? emptyState('Nothing on your watchlist.') : '',
   ].join('');
 }
 
@@ -337,7 +337,7 @@ function renderKpis() {
     <div class="kpi ${data.subscriptions?.error || !data.subscriptions?.canUnsubscribe ? 'warn' : 'calm'}">
       <span class="kpi-label">Subscriptions</span>
       <span class="kpi-value">${data.subscriptions?.items.length ?? 0}</span>
-      <span class="kpi-sub">${data.subscriptions?.unread ?? 0} unread · ${data.subscriptions?.canUnsubscribe ? 'manual subscriptions' : 'unavailable'}</span>
+      <span class="kpi-sub">${data.subscriptions?.unread ?? 0} unread · ${data.subscriptions?.canUnsubscribe ? 'watched' : 'unavailable'}</span>
     </div>
     <div class="kpi ${failing ? 'alert' : 'calm'}">
       <span class="kpi-label">Failing workflows</span>

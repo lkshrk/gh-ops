@@ -9,6 +9,7 @@ const SUBSCRIPTION_LIMIT = 30;
 const NOTIFICATION_PAGE_LIMIT = 10;
 const AUTHORED_LIMIT = 50;
 const RETRYABLE_STATUSES = new Set([502, 503, 504]);
+const LAST_COMMENT = 'comments(last: 1) { nodes { createdAt author { login } } }';
 
 const RENOVATE_CONFIG_FILES = [
   'renovate.json',
@@ -319,14 +320,14 @@ function createGitHubClient({
       const response = await rest('notifications', path, { notificationPage: true });
       for (const thread of response.body) {
         const { subject, repository } = thread;
-        const authored = thread.reason === 'author' && subject?.type !== 'PullRequest';
-        if ((thread.reason !== 'manual' && !authored) || !['Issue', 'PullRequest', 'Discussion'].includes(subject?.type)) continue;
+        const authored = thread.reason === 'author';
+        if ((thread.reason !== 'manual' && !authored) || !['Issue', 'Discussion'].includes(subject?.type)) continue;
         const repo = repository?.full_name;
         const [owner, name] = (repo || '').split('/');
         if (excluded.has(owner?.toLowerCase())) continue;
-        const kind = { Issue: 'issues', PullRequest: 'pulls', Discussion: 'discussions' }[subject.type];
+        const kind = { Issue: 'issues', Discussion: 'discussions' }[subject.type];
         // Never follow a subject URL: validate its identity, then build our own query and browser URL.
-        const match = subject.url?.match(/^https:\/\/api\.github\.com\/repos\/([\w.-]+)\/([\w.-]+)\/(issues|pulls|discussions)\/([1-9]\d*)$/);
+        const match = subject.url?.match(/^https:\/\/api\.github\.com\/repos\/([\w.-]+)\/([\w.-]+)\/(issues|discussions)\/([1-9]\d*)$/);
         if (!match || `${match[1]}/${match[2]}`.toLowerCase() !== repo?.toLowerCase() || match[3] !== kind || !/^[1-9]\d*$/.test(String(thread.id)) || !Number.isSafeInteger(Number(match[4]))) {
           warnings.push(`Invalid notification subject for thread ${thread.id}; skipped.`);
           continue;
@@ -335,10 +336,10 @@ function createGitHubClient({
         if (candidates.has(key)) continue;
         if (candidates.size === SUBSCRIPTION_LIMIT) { truncated = true; break; }
         candidates.set(key, {
-          id: String(thread.id), url: `https://github.com/${owner}/${name}/${kind === 'pulls' ? 'pull' : kind}/${match[4]}`,
+          id: String(thread.id), url: `https://github.com/${owner}/${name}/${kind}/${match[4]}`,
           repo, owner, number: Number(match[4]), title: subject.title, type: subject.type, authored,
           unread: Boolean(thread.unread), updatedAt: thread.updated_at,
-          subscribed: null, state: null, closedAt: null, mergedAt: null,
+          subscribed: null, state: null, closedAt: null,
         });
       }
       const next = response.link?.match(/<([^>]+)>;\s*rel="next"/)?.[1];
@@ -372,31 +373,6 @@ function createGitHubClient({
       threads.push(thread);
     }
 
-    for (let start = 0; start < threads.length; start += REPO_BATCH_SIZE) {
-      const batch = threads.slice(start, start + REPO_BATCH_SIZE);
-      const fields = batch.map((thread, i) => {
-        const field = { Issue: 'issue', PullRequest: 'pullRequest', Discussion: 'discussion' }[thread.type];
-        const stateFields = thread.type === 'Discussion' ? 'closed closedAt' : `state closedAt${thread.type === 'PullRequest' ? ' mergedAt' : ''}`;
-        return `repo${i}: repository(owner: ${JSON.stringify(thread.owner)}, name: ${JSON.stringify(thread.repo.split('/')[1])}) { subject: ${field}(number: ${thread.number}) { ${stateFields} } }`;
-      });
-      let data;
-      try {
-        if (!stateClient) throw new Error('Viewer state client unavailable');
-        data = await stateClient.graphql('subscription-subjects', `query { ${fields.join('\n')} }`);
-      } catch (error) {
-        warnings.push(`Subscription subject states unavailable: ${error.message}`);
-      }
-      batch.forEach((thread, i) => {
-        const subject = data?.[`repo${i}`]?.subject;
-        thread.state = thread.type === 'Discussion'
-          ? (typeof subject?.closed === 'boolean' ? (subject.closed ? 'CLOSED' : 'OPEN') : null)
-          : subject?.state || null;
-        thread.closedAt = subject?.closedAt || null;
-        thread.mergedAt = subject?.mergedAt || null;
-        if (!thread.state) warnings.push(`Subject state unknown for ${thread.repo}#${thread.number}.`);
-      });
-    }
-
     if (viewer) {
       const scope = [`author:${viewer}`, 'is:open', ...excludeOwners.map((owner) => `-user:${owner}`)].join(' ');
       try {
@@ -425,7 +401,7 @@ function createGitHubClient({
             repo, owner, number: subject.number, title: subject.title, type: subject.type, authored: true,
             unread: false, updatedAt: subject.updatedAt,
             subscribed: subject.viewerSubscription === 'SUBSCRIBED' ? true : null,
-            state: 'OPEN', closedAt: null, mergedAt: null,
+            state: 'OPEN', closedAt: null,
           });
         }
       } catch (error) {
@@ -534,10 +510,11 @@ function createGitHubClient({
     return [...rateLimits.values()].sort((a, b) => a.remaining / a.limit - b.remaining / b.limit)[0] || null;
   }
 
-  async function fetchTrackedSubjects(entries) {
+  async function fetchTrackedSubjects(entries, { viewer } = {}) {
     const subjects = new Map();
     const warnings = [];
-    const unknown = () => ({ title: null, updatedAt: null, state: null, closedAt: null, subscribed: null });
+    const self = String(viewer ?? '').toLowerCase();
+    const unknown = () => ({ title: null, updatedAt: null, state: null, closedAt: null, subscribed: null, activityAt: null });
     const valid = [];
     for (const entry of entries || []) {
       const [owner, name, ...rest] = String(entry?.repo ?? '').split('/');
@@ -555,8 +532,8 @@ function createGitHubClient({
       const batch = valid.slice(start, start + REPO_BATCH_SIZE);
       const fields = batch.map(({ entry, owner, name }, i) => {
         const [field, selection] = entry.type === 'Discussion'
-          ? ['discussion', 'title updatedAt closed closedAt viewerSubscription']
-          : ['issue', 'title updatedAt state closedAt viewerSubscription'];
+          ? ['discussion', `title updatedAt closed closedAt viewerSubscription ${LAST_COMMENT}`]
+          : ['issue', `title updatedAt state closedAt viewerSubscription ${LAST_COMMENT}`];
         return `repo${i}: repository(owner: ${JSON.stringify(owner)}, name: ${JSON.stringify(name)}) { subject: ${field}(number: ${entry.number}) { ${selection} } }`;
       });
       let data;
@@ -581,7 +558,13 @@ function createGitHubClient({
         }
         const subscribed = subject.viewerSubscription === 'SUBSCRIBED' ? true
           : (subject.viewerSubscription === 'UNSUBSCRIBED' || subject.viewerSubscription === 'IGNORED' ? false : null);
-        subjects.set(entry.url, { title: subject.title ?? null, updatedAt: subject.updatedAt ?? null, state, closedAt: subject.closedAt ?? null, subscribed });
+        const comment = subject.comments?.nodes?.at(-1);
+        const byViewer = Boolean(self) && String(comment?.author?.login ?? '').toLowerCase() === self;
+        const otherCommentAt = comment?.createdAt && !byViewer ? comment.createdAt : null;
+        const closedAt = subject.closedAt ?? null;
+        const activityAt = [closedAt, otherCommentAt].filter((at) => Number.isFinite(Date.parse(at)))
+          .reduce((best, at) => (best === null || Date.parse(at) > Date.parse(best) ? at : best), null);
+        subjects.set(entry.url, { title: subject.title ?? null, updatedAt: subject.updatedAt ?? null, state, closedAt, subscribed, activityAt });
       });
     }
     return { subjects, warnings };

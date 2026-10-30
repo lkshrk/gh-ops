@@ -5,19 +5,21 @@ const URL = 'https://github.com/other/repo/issues/1';
 const NOW = new Date('2026-10-30T12:00:00.000Z');
 const thread = (overrides = {}) => ({
   id: '42', url: URL, repo: 'other/repo', owner: 'other', number: 1, title: 'Issue', type: 'Issue', authored: false,
-  unread: false, updatedAt: '2026-10-27T00:00:00Z', subscribed: true, state: 'OPEN', closedAt: null, mergedAt: null, ...overrides,
+  unread: false, updatedAt: '2026-10-27T00:00:00Z', subscribed: true, state: 'OPEN', closedAt: null, ...overrides,
 });
 const entry = (overrides = {}) => ({
   url: URL, owner: 'other', repo: 'other/repo', type: 'Issue', number: 1, authored: false, threadId: '42', title: 'Issue',
   updatedAt: '2026-10-27T00:00:00Z', state: 'OPEN', closedAt: null, subscribed: true, notificationUnread: false,
   notificationUpdatedAt: '2026-10-27T00:00:00Z', seenUpdatedAt: '2026-10-27T00:00:00Z', removedAt: null, ...overrides,
 });
-const unknown = { title: null, updatedAt: null, state: null, closedAt: null, subscribed: null };
+const unknown = { title: null, updatedAt: null, state: null, closedAt: null, subscribed: null, activityAt: null };
+const open = (overrides = {}) => ({ title: 'Issue', updatedAt: '2026-10-27T00:00:00Z', state: 'OPEN', closedAt: null, subscribed: true, activityAt: null, ...overrides });
+const DAY = 86400000;
 
 test('a new entry is not unread unless its notification is unread', () => {
   const entries = {};
   expect(mergeDiscovered(entries, [thread()], NOW)).toEqual([URL]);
-  expect(entries[URL]).toEqual(entry());
+  expect(entries[URL]).toEqual(entry({ unsettled: true }));
   expect(isUnread(entries[URL])).toBe(false);
 
   const unread = {};
@@ -28,15 +30,21 @@ test('a new entry is not unread unless its notification is unread', () => {
 
   const authored = {};
   mergeDiscovered(authored, [thread({ id: null, authored: true })], NOW);
-  expect(authored[URL]).toEqual(entry({ threadId: null, authored: true, notificationUpdatedAt: null }));
+  expect(authored[URL]).toEqual(entry({ threadId: null, authored: true, notificationUpdatedAt: null, unsettled: true }));
   expect(isUnread(authored[URL])).toBe(false);
 });
 
 test('settleAdded marks tracked activity on new read entries as seen, but not unread notifications', () => {
-  const entries = { [URL]: entry({ updatedAt: '2026-10-28T00:00:00Z' }), b: entry({ url: 'b', seenUpdatedAt: null, notificationUnread: true }) };
-  settleAdded(entries, [URL, 'b', 'missing']);
-  expect(entries[URL].seenUpdatedAt).toBe('2026-10-28T00:00:00Z');
+  const entries = {
+    [URL]: entry({ updatedAt: '2026-10-28T00:00:00Z', activityAt: '2026-10-29T00:00:00Z', unsettled: true }),
+    b: entry({ url: 'b', seenUpdatedAt: null, notificationUnread: true, unsettled: true }),
+    settled: entry({ url: 'settled', updatedAt: '2026-10-28T00:00:00Z' }),
+  };
+  settleAdded(entries, [URL, 'b', 'settled', 'missing']);
+  expect(entries[URL]).toEqual(entry({ updatedAt: '2026-10-28T00:00:00Z', activityAt: '2026-10-29T00:00:00Z', seenUpdatedAt: '2026-10-29T00:00:00Z' }));
   expect(entries.b.seenUpdatedAt).toBeNull();
+  expect(entries.b).not.toHaveProperty('unsettled');
+  expect(entries.settled.seenUpdatedAt).toBe('2026-10-27T00:00:00Z');
 });
 
 test('an existing entry keeps seen state and refreshes notification fields', () => {
@@ -53,7 +61,7 @@ test('an existing entry keeps seen state and refreshes notification fields', () 
   expect(entries[URL].state).toBe('OPEN');
 });
 
-test('an entry stays after acknowledge while open, and updatedAt advancing makes it unread again', () => {
+test('an entry stays after acknowledge while open, and activity by others makes it unread again', () => {
   const entries = { [URL]: entry({ updatedAt: '2026-10-28T00:00:00Z', notificationUnread: true, notificationUpdatedAt: '2026-10-29T00:00:00Z' }) };
   expect(isUnread(entries[URL])).toBe(true);
   expect(acknowledge(entries, URL, NOW)).toBe(true);
@@ -63,7 +71,9 @@ test('an entry stays after acknowledge while open, and updatedAt advancing makes
   prune(entries, NOW);
   expect(Object.keys(entries)).toEqual([URL]);
 
-  applyTracked(entries, new Map([[URL, { title: 'Issue', updatedAt: '2026-10-30T00:00:00Z', state: 'OPEN', closedAt: null, subscribed: true }]]));
+  applyTracked(entries, new Map([[URL, open({ updatedAt: '2026-10-30T00:00:00Z' })]]), NOW);
+  expect(isUnread(entries[URL])).toBe(false);
+  applyTracked(entries, new Map([[URL, open({ updatedAt: '2026-10-30T00:00:00Z', activityAt: '2026-10-30T00:00:00Z' })]]), NOW);
   expect(isUnread(entries[URL])).toBe(true);
   expect(acknowledge(entries, 'missing', NOW)).toBe(false);
 });
@@ -73,7 +83,7 @@ test('a closed unread entry is kept, and acknowledging it tombstones it', () => 
   prune(entries, NOW);
   expect(rows(entries)).toEqual([{
     id: '42', url: URL, repo: 'other/repo', owner: 'other', number: 1, title: 'Issue', type: 'Issue', state: 'CLOSED', authored: false,
-    unread: true, subscribed: true, updatedAt: '2026-10-28T00:00:00Z', closedAt: '2026-10-28T00:00:00Z', mergedAt: null,
+    unread: true, subscribed: true, updatedAt: '2026-10-28T00:00:00Z', closedAt: '2026-10-28T00:00:00Z',
   }]);
   expect(acknowledge(entries, URL, NOW)).toBe(true);
   expect(entries[URL].removedAt).toBe(NOW.toISOString());
@@ -92,7 +102,7 @@ test('discovery never moves updatedAt backwards', () => {
   expect(entries[URL].updatedAt).toBe('2026-10-30T00:00:00Z');
 });
 
-test('a closed seen entry is pruned and so is subscribed === false', () => {
+test('a closed seen entry is tombstoned and subscribed === false is deleted', () => {
   const entries = {
     closed: entry({ url: 'closed', state: 'CLOSED' }),
     merged: entry({ url: 'merged', state: 'MERGED' }),
@@ -101,23 +111,48 @@ test('a closed seen entry is pruned and so is subscribed === false', () => {
     open: entry({ url: 'open' }),
   };
   prune(entries, NOW);
-  expect(Object.keys(entries).sort()).toEqual(['open', 'unknownSubscription']);
+  expect(Object.keys(entries).sort()).toEqual(['closed', 'merged', 'open', 'unknownSubscription']);
+  expect([entries.closed.removedAt, entries.merged.removedAt, entries.open.removedAt]).toEqual([NOW.toISOString(), NOW.toISOString(), null]);
+  expect(rows(entries).map(({ url }) => url).sort()).toEqual(['open', 'unknownSubscription']);
+  expect(mergeDiscovered(entries, [thread({ url: 'closed', state: 'CLOSED' })], NOW)).toEqual([]);
+  expect(entries.closed.removedAt).toBe(NOW.toISOString());
+  const pruned = structuredClone(entries);
+  prune(entries, NOW);
+  expect(entries).toEqual(pruned);
 });
 
-test('an unknown lookup keeps the entry with state: null and is never dropped', () => {
+test('an unknown lookup keeps the entry with state: null until it has been unknown for 14 days', () => {
   const entries = { [URL]: entry({ state: 'CLOSED', closedAt: '2026-10-28T00:00:00Z', updatedAt: '2026-10-28T00:00:00Z', seenUpdatedAt: '2026-10-28T00:00:00Z' }) };
-  applyTracked(entries, new Map([[URL, unknown]]));
-  expect(entries[URL]).toEqual(entry({ state: null, closedAt: null, subscribed: null, updatedAt: '2026-10-28T00:00:00Z', seenUpdatedAt: '2026-10-28T00:00:00Z' }));
+  applyTracked(entries, new Map([[URL, unknown]]), NOW);
+  expect(entries[URL]).toEqual(entry({ state: null, closedAt: null, subscribed: null, updatedAt: '2026-10-28T00:00:00Z', seenUpdatedAt: '2026-10-28T00:00:00Z', unknownSince: NOW.toISOString() }));
   prune(entries, NOW);
   expect(rows(entries).map(({ state }) => state)).toEqual([null]);
+
+  const later = new Date(NOW.getTime() + 13 * DAY);
+  applyTracked(entries, new Map([[URL, unknown]]), later);
+  expect(entries[URL].unknownSince).toBe(NOW.toISOString());
+  applyTracked(entries, new Map(), later);
+  prune(entries, later);
+  expect(rows(entries)).toHaveLength(1);
+  prune(entries, new Date(NOW.getTime() + 15 * DAY));
+  expect(entries[URL].removedAt).toBe(new Date(NOW.getTime() + 15 * DAY).toISOString());
+  expect(rows(entries)).toEqual([]);
+});
+
+test('a known lookup clears unknownSince so the entry is not pruned', () => {
+  const entries = { [URL]: entry({ state: null, unknownSince: '2026-01-01T00:00:00Z' }) };
+  applyTracked(entries, new Map([[URL, open()]]), NOW);
+  expect(entries[URL].unknownSince).toBeNull();
+  prune(entries, NOW);
+  expect(rows(entries).map(({ state }) => state)).toEqual(['OPEN']);
 });
 
 test('applyTracked copies lookup fields and skips tombstones and missing results', () => {
   const removed = entry({ url: 'removed', removedAt: '2026-10-29T00:00:00Z' });
   const entries = { [URL]: entry(), removed, untouched: entry({ url: 'untouched' }) };
   const subject = { title: 'New', updatedAt: '2026-10-29T00:00:00Z', state: 'CLOSED', closedAt: '2026-10-29T00:00:00Z', subscribed: true };
-  applyTracked(entries, new Map([[URL, subject], ['removed', subject]]));
-  expect(entries[URL]).toEqual(entry(subject));
+  applyTracked(entries, new Map([[URL, subject], ['removed', subject]]), NOW);
+  expect(entries[URL]).toEqual(entry({ ...subject, activityAt: null, unknownSince: null }));
   expect(entries.removed).toEqual(removed);
   expect(entries.untouched).toEqual(entry({ url: 'untouched' }));
 });
@@ -194,10 +229,53 @@ test('a tombstone that is still discovered never expires, and an unseen one does
   expect(seen[URL].lastSeenAt).toBe(NOW.toISOString());
   prune(seen, new Date(NOW.getTime() + 179 * 86400000));
   expect(seen[URL]).toBeDefined();
+  const before = seen[URL];
+  mergeDiscovered(seen, [thread({ updatedAt: '2026-01-01T00:00:00Z' })], new Date(NOW.getTime() + 12 * 3600000));
+  expect(seen[URL]).toBe(before);
   prune(seen, new Date(NOW.getTime() + 181 * 86400000));
   expect(seen[URL]).toBeUndefined();
 
   const unseen = { [URL]: entry({ removedAt }) };
   prune(unseen, NOW);
   expect(unseen[URL]).toBeUndefined();
+});
+
+test('the viewer\'s own activity after acknowledge keeps an item read', () => {
+  const entries = { [URL]: entry({ seenUpdatedAt: null, updatedAt: '2026-10-20T00:00:00Z' }) };
+  applyTracked(entries, new Map([[URL, open({ updatedAt: '2026-10-20T00:00:00Z', activityAt: '2026-10-20T00:00:00Z' })]]), NOW);
+  expect(isUnread(entries[URL])).toBe(true);
+  acknowledge(entries, URL, NOW);
+  expect(isUnread(entries[URL])).toBe(false);
+  applyTracked(entries, new Map([[URL, open({ updatedAt: '2026-10-29T00:00:00Z', activityAt: '2026-10-20T00:00:00Z' })]]), NOW);
+  expect(isUnread(entries[URL])).toBe(false);
+  expect(rows(entries)[0].updatedAt).toBe('2026-10-29T00:00:00Z');
+});
+
+test('a comment by someone else flips an acknowledged item to unread', () => {
+  const entries = { [URL]: entry({ activityAt: null }) };
+  expect(isUnread(entries[URL])).toBe(false);
+  applyTracked(entries, new Map([[URL, open({ updatedAt: '2026-10-29T00:00:00Z', activityAt: '2026-10-29T00:00:00Z' })]]), NOW);
+  expect(isUnread(entries[URL])).toBe(true);
+  acknowledge(entries, URL, NOW);
+  expect(entries[URL].seenUpdatedAt).toBe('2026-10-29T00:00:00Z');
+  expect(isUnread(entries[URL])).toBe(false);
+});
+
+test('a closure flips an item to unread and keeps it through prune', () => {
+  const entries = { [URL]: entry({ activityAt: null }) };
+  const closed = open({ state: 'CLOSED', closedAt: '2026-10-29T00:00:00Z', updatedAt: '2026-10-29T00:00:00Z', activityAt: '2026-10-29T00:00:00Z' });
+  applyTracked(entries, new Map([[URL, closed]]), NOW);
+  prune(entries, NOW);
+  expect(rows(entries).map(({ unread, state }) => [unread, state])).toEqual([[true, 'CLOSED']]);
+});
+
+test('updatedAt is the unread fallback only for entries that never had activityAt', () => {
+  const legacy = entry({ updatedAt: '2026-10-29T00:00:00Z' });
+  expect(isUnread(legacy)).toBe(true);
+  expect(isUnread({ ...legacy, activityAt: null })).toBe(false);
+  const entries = { [URL]: entry({ updatedAt: '2026-10-29T00:00:00Z', activityAt: '2026-10-20T00:00:00Z' }) };
+  applyTracked(entries, new Map([[URL, unknown]]), NOW);
+  applyTracked(entries, new Map(), NOW);
+  expect(entries[URL].activityAt).toBe('2026-10-20T00:00:00Z');
+  expect(isUnread(entries[URL])).toBe(false);
 });

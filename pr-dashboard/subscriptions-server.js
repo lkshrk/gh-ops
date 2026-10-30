@@ -32,7 +32,7 @@ export function createSubscriptionsController({ createClient, watchStore, rebuil
       let tracked = { subjects: new Map(), warnings: [] };
       if (options?.stateClient?.fetchTrackedSubjects && targets.length) {
         try {
-          tracked = await options.stateClient.fetchTrackedSubjects(targets);
+          tracked = await options.stateClient.fetchTrackedSubjects(targets, { viewer: options.viewer });
         } catch (cause) {
           tracked = { subjects: new Map(), warnings: [`Tracked subjects unavailable: ${cause.message}`] };
         }
@@ -42,11 +42,11 @@ export function createSubscriptionsController({ createClient, watchStore, rebuil
       // Synchronous from here: re-read the store.
       const entries = { ...watchStore.watchlistAll() };
       const now = new Date();
-      const added = mergeDiscovered(entries, surviving(entries), now);
-      applyTracked(entries, tracked.subjects);
-      settleAdded(entries, added);
+      mergeDiscovered(entries, surviving(entries), now);
+      applyTracked(entries, tracked.subjects, now);
+      settleAdded(entries, [...tracked.subjects.keys()]);
       prune(entries, now);
-      watchStore.replaceWatch(entries);
+      if (JSON.stringify(entries) !== JSON.stringify(watchStore.watchlistAll())) watchStore.replaceWatch(entries);
       data = { warnings: [...discovered.warnings, ...tracked.warnings], truncated: discovered.truncated };
       error = null;
     } catch (cause) {

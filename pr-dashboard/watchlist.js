@@ -1,4 +1,6 @@
-const TOMBSTONE_TTL_MS = 180 * 86400000;
+const DAY_MS = 86400000;
+const TOMBSTONE_TTL_MS = 180 * DAY_MS;
+const UNKNOWN_TTL_MS = 14 * DAY_MS;
 
 function time(value) {
   const parsed = value ? Date.parse(value) : NaN;
@@ -20,8 +22,13 @@ function isClosed(entry) {
   return entry.state === 'CLOSED' || entry.state === 'MERGED';
 }
 
+// Entries never looked up (no activityAt key) fall back to updatedAt.
+function activity(entry) {
+  return entry.activityAt === undefined ? entry.updatedAt : entry.activityAt;
+}
+
 function isUnread(entry) {
-  return isAfter(entry.updatedAt, entry.seenUpdatedAt)
+  return isAfter(activity(entry), entry.seenUpdatedAt)
     || Boolean(entry.notificationUnread && isAfter(entry.notificationUpdatedAt, entry.seenUpdatedAt));
 }
 
@@ -34,7 +41,7 @@ function newEntry(thread) {
     authored: Boolean(thread.authored), threadId: thread.id ?? null, title: thread.title ?? null, updatedAt,
     state: thread.state ?? null, closedAt: thread.closedAt ?? null, subscribed: thread.subscribed ?? null,
     notificationUnread, notificationUpdatedAt: notified ? updatedAt : null,
-    seenUpdatedAt: notificationUnread ? null : updatedAt, removedAt: null,
+    seenUpdatedAt: notificationUnread ? null : updatedAt, removedAt: null, unsettled: true,
   };
 }
 
@@ -70,7 +77,7 @@ function mergeDiscovered(entries, threads, now) {
       entries[thread.url] = refreshed(entry, thread);
     } else if (revives(entry, thread)) {
       entries[thread.url] = refreshed({ ...entry, removedAt: null, lastSeenAt: null, seenUpdatedAt: latest(entry.seenUpdatedAt, entry.removedAt) }, thread);
-    } else {
+    } else if ((time(entry.lastSeenAt) ?? -Infinity) <= now.getTime() - DAY_MS) {
       entries[thread.url] = { ...entry, lastSeenAt: now.toISOString() };
     }
   }
@@ -80,33 +87,45 @@ function mergeDiscovered(entries, threads, now) {
 function settleAdded(entries, urls) {
   for (const url of urls) {
     const entry = entries[url];
-    if (!entry || entry.removedAt || entry.notificationUnread) continue;
-    entries[url] = { ...entry, seenUpdatedAt: latest(entry.seenUpdatedAt, entry.updatedAt) };
+    if (!entry?.unsettled) continue;
+    const { unsettled: _, ...settled } = entry;
+    if (!settled.removedAt && !settled.notificationUnread) {
+      settled.seenUpdatedAt = latest(settled.seenUpdatedAt, settled.updatedAt, activity(settled));
+    }
+    entries[url] = settled;
   }
 }
 
-function applyTracked(entries, subjects) {
+function applyTracked(entries, subjects, now = new Date()) {
   for (const [url, subject] of subjects || []) {
     const entry = entries[url];
     if (!entry || entry.removedAt || !subject) continue;
-    entries[url] = {
+    const known = subject.state != null;
+    const next = {
       ...entry,
       title: subject.title ?? entry.title,
       updatedAt: subject.updatedAt ?? entry.updatedAt,
       state: subject.state ?? null,
       closedAt: subject.closedAt ?? null,
       subscribed: subject.subscribed ?? null,
+      unknownSince: known ? null : entry.unknownSince ?? now.toISOString(),
     };
+    if (known) next.activityAt = subject.activityAt ?? null;
+    entries[url] = next;
   }
 }
 
 function prune(entries, now) {
   const cutoff = now.getTime() - TOMBSTONE_TTL_MS;
+  const unknownCutoff = now.getTime() - UNKNOWN_TTL_MS;
   for (const [url, entry] of Object.entries(entries)) {
-    const drop = entry.removedAt
-      ? (time(latest(entry.lastSeenAt, entry.removedAt)) ?? -Infinity) < cutoff
-      : entry.subscribed === false || (isClosed(entry) && !isUnread(entry));
-    if (drop) delete entries[url];
+    if (entry.removedAt) {
+      if ((time(latest(entry.lastSeenAt, entry.removedAt)) ?? -Infinity) < cutoff) delete entries[url];
+    } else if (entry.subscribed === false) {
+      delete entries[url];
+    } else if ((isClosed(entry) && !isUnread(entry)) || (time(entry.unknownSince) ?? Infinity) < unknownCutoff) {
+      entries[url] = { ...entry, removedAt: now.toISOString() };
+    }
   }
 }
 
@@ -114,7 +133,7 @@ function acknowledge(entries, url, now = new Date()) {
   const entry = entries[url];
   if (!entry || entry.removedAt) return false;
   if (isClosed(entry)) entries[url] = { ...entry, removedAt: now.toISOString() };
-  else entries[url] = { ...entry, seenUpdatedAt: latest(entry.seenUpdatedAt, entry.updatedAt, entry.notificationUpdatedAt) };
+  else entries[url] = { ...entry, seenUpdatedAt: latest(entry.seenUpdatedAt, activity(entry), entry.updatedAt, entry.notificationUpdatedAt) };
   return true;
 }
 
@@ -134,7 +153,7 @@ function rows(entries) {
     .map((entry) => ({
       id: entry.threadId ?? null, url: entry.url, repo: entry.repo, owner: entry.owner, number: entry.number, title: entry.title,
       type: entry.type, state: entry.state, authored: Boolean(entry.authored), unread: isUnread(entry),
-      subscribed: entry.subscribed, updatedAt: entry.updatedAt, closedAt: entry.closedAt, mergedAt: null,
+      subscribed: entry.subscribed, updatedAt: entry.updatedAt, closedAt: entry.closedAt,
     }))
     .sort((a, b) => Number(b.unread) - Number(a.unread) || recency(b) - recency(a));
 }

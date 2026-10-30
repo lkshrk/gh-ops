@@ -8,7 +8,7 @@ function fixture() {
   return {
     owners: ['me'], repoCount: 1, generatedAt: new Date().toISOString(), ownerErrors: [],
     contributions: { attention: [], open: [], closed: [] },
-    subscriptions: { items: [], unread: 0, hidden: 0, canUnsubscribe: true, warnings: [], truncated: false, error: null },
+    subscriptions: { items: [], unread: 0, canUnsubscribe: true, warnings: [], truncated: false, error: null },
     workflows: { failing: [], recent: [], failStreak: 3 },
     renovate: { repos: [], untracked: [], onboarding: [], stats: { windowDays: 7 } },
   };
@@ -228,7 +228,7 @@ test('old hidden owners cannot hide workflows, Renovate rows or counts, and poll
 test('subscriptions escape text and show type/state/unread, warnings and unavailable states', async () => {
   const ui = client();
   const snapshot = fixture();
-  snapshot.subscriptions = { ...snapshot.subscriptions, canUnsubscribe: false, error: '<error>', warnings: ['<lookup>'], truncated: true, hidden: 2,
+  snapshot.subscriptions = { ...snapshot.subscriptions, canUnsubscribe: false, error: '<error>', warnings: ['<lookup>'], truncated: true,
     items: [
       { url: 'https://github.com/up/repo/issues/1', repo: '<repo>', title: '<title>', type: 'Issue', state: 'OPEN', unread: true, id: '1', subscribed: true, updatedAt: new Date().toISOString() },
       { title: 'PR', type: 'PullRequest', state: 'MERGED', id: '1', subscribed: true },
@@ -243,6 +243,11 @@ test('subscriptions escape text and show type/state/unread, warnings and unavail
   snapshot.subscriptions = { ...snapshot.subscriptions, error: null, items: [] };
   await ui.show(snapshot);
   assert.match(ui.document.querySelector('#subscriptions .panel-body').innerHTML, /unavailable/i);
+  snapshot.subscriptions = { ...snapshot.subscriptions, canUnsubscribe: true, warnings: [], truncated: false };
+  await ui.show(snapshot);
+  assert.match(ui.document.querySelector('#subscriptions .panel-body').innerHTML, /Nothing on your watchlist\./);
+  assert.match(ui.document.getElementById('kpis').innerHTML, /0 unread · watched/);
+  assert.doesNotMatch(ui.document.getElementById('kpis').innerHTML, /manual subscriptions/);
 });
 
 test('authored subscriptions are labelled and offer unsubscribing only with a notification thread', async () => {
