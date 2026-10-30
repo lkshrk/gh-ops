@@ -7,10 +7,9 @@ Live, single-page dashboard over everything you maintain or contribute to on Git
    unresolved review threads), *Open, waiting on others*, and *Recently closed*. **Done** on a
    *Needs you* pull request moves it to *Open* until a human other than you comments, reviews or
    opens a review thread on it again; then it returns to *Needs you* and the flag is dropped.
-2. **Subscriptions**: manually subscribed issues, pull requests and discussions outside your
-   configured owners, discovered through GitHub notifications, plus open issues and discussions
-   you opened there. Shows unread, unknown-state and *Opened by you* badges, recent closures, and
-   an **Unsubscribe** action for confirmed subscriptions.
+2. **Subscriptions**: a durable watchlist of upstream issues and discussions you authored or are
+   subscribed to, outside your configured owners. Shows unread, unknown-state and *Opened by you*
+   badges, and a trash action that removes an item.
 3. **Failing workflows**: default-branch GitHub Actions workflows across your own and your
    organizations' repositories whose latest `FAIL_STREAK` runs all failed, with a run strip and
    the date the streak started. Workflows with a shorter red streak sit in a collapsed list.
@@ -37,7 +36,7 @@ Renovate pull requests are recognised by their head branch prefix, because a sel
 Renovate App does not show up as `app/renovate`.
 
 There is no authentication in the app; anyone who reaches it can set *Done* flags and use the
-configured account's **Unsubscribe** action. Protect access at the gateway. On h-cloud, Envoy
+configured account's remove action, which can unsubscribe GitHub notification threads. Protect access at the gateway. On h-cloud, Envoy
 Gateway handles OIDC with Authentik.
 
 ## Environment variables
@@ -45,7 +44,7 @@ Gateway handles OIDC with Authentik.
 | Variable | Default | Description |
 |---|---|---|
 | `GITHUB_TOKENS` | — | Required. JSON object mapping each owner to a token, e.g. `{"my-user":"github_pat_…","my-org":"github_pat_…"}`. The owners listed here are the dashboard's own repositories. |
-| `NOTIFICATIONS_TOKEN` | — | Optional classic PAT for the dashboard user's notifications and Unsubscribe. Without it, Subscriptions shows an unavailable state; the other tabs continue working. |
+| `NOTIFICATIONS_TOKEN` | — | Optional classic PAT for the dashboard user's notifications and thread unsubscribes. Without it, Subscriptions shows an unavailable state; the other tabs continue working. |
 | `RENOVATE_BOT_LOGIN` | `renovate[bot]` | Author login of Renovate's commits and issues (a self-hosted App is `<app-slug>[bot]`). |
 | `PORT` | `3000` | HTTP listen port. |
 | `REFRESH_INTERVAL_MS` | `60000` | How often to poll GitHub. |
@@ -53,7 +52,7 @@ Gateway handles OIDC with Authentik.
 | `RENOVATE_BRANCH_PREFIX` | `renovate/` | Head branch prefix of Renovate pull requests. |
 | `CLOSED_WINDOW_DAYS` | `30` | How far back Contributions' *Recently closed* reaches. |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error`. |
-| `STATE_FILE` | — | JSON file that keeps *Done* flags across restarts. Unset keeps them in memory only. |
+| `STATE_FILE` | — | JSON file that keeps *Done* flags and the Subscriptions watchlist across restarts. Unset keeps them in memory only. |
 
 ### Tokens
 
@@ -88,39 +87,45 @@ unknown rather than inferred from notification timestamps. Credential provisioni
 operator step. On h-cloud, the optional `NOTIFICATIONS_TOKEN` key in `pr-dashboard-secret`
 supplies this variable.
 
-### Subscription discovery and Unsubscribe
+### Subscriptions watchlist
 
-- Discovery requests `/notifications?all=true&participating=true&per_page=100`, including read
-  notifications, then keeps only `reason: manual` issues, pull requests and discussions, and
-  `reason: author` issues and discussions, outside owners configured in `GITHUB_TOKENS`.
-  Mentions, assignments, repository watching and other notification reasons do not qualify;
-  authored pull requests belong to Contributions. This is notification-based discovery, **not an
-  inventory of every historical subscription**: a subscription without an available matching
-  notification cannot be found.
-- Open issues and discussions you authored outside those owners are also found by search with
-  the viewer token (up to **50** of each, truncation reported), skipping subjects you
-  unsubscribed from or ignore. Rows found only this way have no notification thread, so they
-  show no Unsubscribe button.
-- Each distinct subject's thread subscription is checked. Unsubscribed, ignored and `404`
-  subscriptions are omitted. Failed or inconclusive checks remain visible as **Unknown
-  subscription**, with warnings and no Unsubscribe button.
-- Discovered subjects are kept in a durable watchlist in `STATE_FILE` and re-checked directly
-  each cycle, so a row stays after it is read or drops out of discovery. A row is unread when the
-  subject was updated, or its notification is unread, after you last saw it. Unread rows sort
-  first, then by latest update. A row leaves once its subject is closed and seen, or once you
-  unsubscribe (here or on GitHub). A subject that can't be looked up shows **Unknown state**.
-- Discovery stops at **10 notification pages** or **30 distinct candidate subjects**.
-  These limits apply before subscription filtering, so fewer rows may remain; six is only
-  the GraphQL lookup batch size, not a display limit. Partial results carry a truncation warning.
-- Without `NOTIFICATIONS_TOKEN`, no notification requests are made and Unsubscribe is disabled.
-  Discovery errors are isolated to this tab, which retains previous data when available and
-  reports the error. Unsubscribe is unavailable during discovery errors and returns after a
-  successful refresh. Unknown-state warnings and truncation remain visible.
-- **Unsubscribe** deletes the notification thread subscription with GitHub's
-  [`DELETE /notifications/threads/{thread_id}/subscription`](https://docs.github.com/en/rest/activity/notifications#delete-a-thread-subscription).
-  The row disappears only after success; failure retains it. This is not mark-read, mark-done,
-  or a permanent ignore: GitHub can notify again after a comment or @mention, and watching the
-  repository can still produce notifications. A later subscription can be discovered again.
+The tab tracks upstream issues and discussions you authored or are subscribed to, outside the
+owners configured in `GITHUB_TOKENS`. Pull requests are excluded; authored ones belong to
+Contributions.
+
+- **Discovery.** `/notifications?all=true&participating=true&per_page=100` (read notifications
+  included) is filtered to `reason: manual` and `reason: author` issues and discussions. Open
+  issues and discussions you authored are also found by search with the viewer token (up to **50**
+  of each, truncation reported), skipping subjects you unsubscribed from or ignore. This is
+  notification-based discovery, **not an inventory of every historical subscription**: a
+  subscription without an available matching notification cannot be found. Rows found only by
+  search have no notification thread.
+- **Persistence.** The watchlist lives in `STATE_FILE` next to the *Done* flags and survives
+  restarts; unset means memory only. Each item is re-checked directly every cycle, so it stays
+  after it is read or drops out of discovery.
+- **Unread.** An item is unread when the subject was updated after you last acknowledged it, or
+  when its GitHub notification is unread and newer than that. Newly discovered items start read
+  unless their notification is unread.
+- **Order.** Unread first, then latest update.
+- **Title click.** Acknowledges the item and never blocks navigation. An open item stays as
+  read; a closed item disappears and stays gone.
+- **Trash.** Always removes the item. It also unsubscribes the GitHub notification thread
+  ([`DELETE /notifications/threads/{thread_id}/subscription`](https://docs.github.com/en/rest/activity/notifications#delete-a-thread-subscription))
+  when one exists and the subscription is confirmed. If GitHub fails, the request returns `502`
+  and the item stays. Unsubscribing is not mark-read, mark-done or a permanent ignore: GitHub
+  can notify again after a comment or @mention, and watching the repository can still produce
+  notifications.
+- **Removed items.** They stay gone unless a newer manually subscribed notification arrives. A
+  removed item is forgotten after 180 days without being seen.
+- **Unknown items.** An item GitHub no longer returns shows **Unknown state**. A transient
+  lookup failure keeps the last known state.
+- **Limits.** Discovery stops at **10 notification pages** or **30 distinct candidate
+  subjects**. These limits apply before subscription filtering, so fewer rows may remain; six is
+  only the GraphQL lookup batch size, not a display limit. Partial results carry a truncation
+  warning.
+- **Without `NOTIFICATIONS_TOKEN`** no notification requests are made and the tab is
+  unavailable. Discovery errors are isolated to this tab, which retains previous data when
+  available and reports the error. Unknown-state warnings and truncation remain visible.
 
 ### Renovate health
 
@@ -168,7 +173,8 @@ enough context to act on without reproducing:
 | `/` | Dashboard |
 | `/data.json` | Latest snapshot; `503` until the first refresh succeeds |
 | `POST /contributions/done` | `{"url": "<pull request url>", "done": true\|false}`; returns the updated snapshot. Only same-origin `application/json` requests are accepted |
-| `POST /subscriptions/unsubscribe` | `{"url": "<visible subject url>"}`; returns the updated snapshot after GitHub succeeds. Requires `application/json`; rejects a supplied `Sec-Fetch-Site` other than `same-origin`. Only a currently visible, confirmed subscription with a notification thread is eligible; arbitrary URLs/thread IDs are not accepted. Missing token: `503`; ineligible URL: `404`; upstream failure: `502`. |
+| `POST /subscriptions/acknowledge` | `{"url": "<visible row url>"}`; marks the item as seen (a closed item is removed) and returns the updated snapshot. Requires same-origin `application/json`. Errors: `405` wrong method, `415` wrong content type, `403` cross-origin, `400` bad body, `404` URL not visible |
+| `POST /subscriptions/remove` | `{"url": "<visible row url>"}`; removes the item, unsubscribing its notification thread when one exists and the subscription is confirmed, and returns the updated snapshot. Same requirements and errors as acknowledge, plus `502` when the GitHub unsubscribe fails (the item stays) |
 | `/healthz` | Liveness; `bun pr-dashboard/healthcheck.js` probes it from inside the distroless image |
 
 ## Development
