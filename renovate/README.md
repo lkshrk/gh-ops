@@ -140,8 +140,8 @@ Use these repo-local configs:
 
 All three include `github-actions.json5` followed by `groups.json5`, which keeps
 Node.js, Bun, Playwright and SvelteKit (Kit, adapters, vite-plugin-svelte,
-Svelte) on one branch each across workflows, Dockerfiles and package files.
-Repo-local groups that match these packages override them, because local rules
+Svelte) together across workflows, Dockerfiles and package files: one branch per
+group, with majors on a separate `major-` branch as usual. Repo-local groups that match these packages override them, because local rules
 apply last.
 
 Repos with a standalone config add `github-actions.json5`
@@ -153,6 +153,10 @@ to their `extends`; repos that only want action and runner updates use:
   enabledManagers: ["github-actions", "custom.regex"],
 }
 ```
+
+Such repos get no runtime groups, so a Node.js or Bun minor in a workflow joins
+the "github actions" group. Add `groups.json5` after `github-actions.json5` to
+keep runtimes separate.
 
 Repos whose CI is trusted to gate major updates add `automerge-major.json5`
 after their base preset:
