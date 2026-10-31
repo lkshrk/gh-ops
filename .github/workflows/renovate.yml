@@ -29,9 +29,9 @@ jobs:
       group: renovate-${{ matrix.owner }}-${{ github.event.inputs.repositories || github.event.client_payload.repositories || 'all' }}
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - uses: actions/create-github-app-token@v3
+      - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3
         id: app-token
         if: env.TARGET == '' || contains(format(',{0}', env.TARGET), format(',{0}/', matrix.owner))
         with:
@@ -39,7 +39,7 @@ jobs:
           private-key: ${{ secrets.RENOVATE_APP_PRIVATE_KEY }}
           owner: ${{ matrix.owner }}
 
-      - uses: renovatebot/github-action@v46.3.10
+      - uses: renovatebot/github-action@43b963bf5dd5e57f1f95c59765a018d782870211 # v46.3.11
         if: steps.app-token.outcome == 'success'
         with:
           configurationFile: renovate/config.js
