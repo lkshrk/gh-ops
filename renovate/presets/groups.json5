@@ -4,17 +4,24 @@
   packageRules: [
     {
       matchDatasources: ["docker", "node-version", "github-releases"],
-      matchPackageNames: ["node", "docker.io/library/node", "actions/node-versions"],
+      matchPackageNames: ["node", "docker.io/node", "docker.io/library/node", "index.docker.io/library/node", "actions/node-versions"],
       groupName: "Node.js",
     },
     {
       matchDatasources: ["docker", "npm"],
-      matchPackageNames: ["bun", "oven/bun"],
+      matchPackageNames: ["bun", "oven/bun", "docker.io/oven/bun"],
       groupName: "Bun",
     },
     {
       matchDatasources: ["docker", "npm"],
-      matchPackageNames: ["@playwright/test", "playwright", "mcr.microsoft.com/playwright"],
+      matchPackageNames: [
+        "@playwright/test",
+        "playwright",
+        "playwright-core",
+        "@playwright/browser-*",
+        "@playwright/experimental-ct-*",
+        "mcr.microsoft.com/playwright",
+      ],
       groupName: "Playwright",
     },
     {
