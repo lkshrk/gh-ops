@@ -138,7 +138,13 @@ Use these repo-local configs:
 { extends: ["github>lkshrk/gh-ops//renovate/presets/gitops.json5"] }
 ```
 
-All three include `github-actions.json5`. Repos with a standalone config add it
+All three include `github-actions.json5` followed by `groups.json5`, which keeps
+Node.js, Bun, Playwright and SvelteKit (Kit, adapters, vite-plugin-svelte,
+Svelte) on one branch each across workflows, Dockerfiles and package files.
+Repo-local groups that match these packages override them, because local rules
+apply last.
+
+Repos with a standalone config add `github-actions.json5`
 to their `extends`; repos that only want action and runner updates use:
 
 ```json5

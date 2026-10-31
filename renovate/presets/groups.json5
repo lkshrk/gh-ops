@@ -1,0 +1,26 @@
+{
+  $schema: "https://docs.renovatebot.com/renovate-schema.json",
+  description: "Update runtimes and tightly coupled packages together across all files; extend after github-actions.json5",
+  packageRules: [
+    {
+      matchDatasources: ["docker", "node-version", "github-releases"],
+      matchPackageNames: ["node", "docker.io/library/node", "actions/node-versions"],
+      groupName: "Node.js",
+    },
+    {
+      matchDatasources: ["docker", "npm"],
+      matchPackageNames: ["bun", "oven/bun"],
+      groupName: "Bun",
+    },
+    {
+      matchDatasources: ["docker", "npm"],
+      matchPackageNames: ["@playwright/test", "playwright", "mcr.microsoft.com/playwright"],
+      groupName: "Playwright",
+    },
+    {
+      matchDatasources: ["npm"],
+      matchPackageNames: ["@sveltejs/kit", "@sveltejs/adapter-*", "@sveltejs/vite-plugin-svelte", "svelte"],
+      groupName: "SvelteKit",
+    },
+  ],
+}

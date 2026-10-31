@@ -3,6 +3,7 @@
   extends: [
     "github>lkshrk/gh-ops//renovate/presets/default.json5",
     "github>lkshrk/gh-ops//renovate/presets/github-actions.json5",
+    "github>lkshrk/gh-ops//renovate/presets/groups.json5",
     "docker:enableMajor",
     "helpers:pinGitHubActionDigests",
   ],
