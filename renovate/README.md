@@ -116,7 +116,7 @@ Run the integration checks against an installed Renovate package:
 
 ```sh
 RENOVATE_TEST_DIST_DIR=/path/to/node_modules/renovate/dist \
-  node --test renovate/config.test.js renovate/presets.test.js
+  node --test renovate/config.test.js
 ```
 
 The tests use Renovate's real config loader and manager dispatcher, including
@@ -138,7 +138,13 @@ Use these repo-local configs:
 { extends: ["github>lkshrk/gh-ops//renovate/presets/gitops.json5"] }
 ```
 
-All three include `github-actions.json5`. Repos with a standalone config add it
+All three include `github-actions.json5` followed by `groups.json5`, which keeps
+Node.js, Bun, Playwright and SvelteKit (Kit, adapters, vite-plugin-svelte,
+Svelte) on one branch each across workflows, Dockerfiles and package files.
+Repo-local groups that match these packages override them, because local rules
+apply last.
+
+Repos with a standalone config add `github-actions.json5`
 to their `extends`; repos that only want action and runner updates use:
 
 ```json5
@@ -159,27 +165,6 @@ after their base preset:
   ],
 }
 ```
-
-### Coordinated groups
-
-`groups.json5` is included by both the default and GitHub Actions presets, so
-Actions-only consumers receive the same runtime and browser groups. It groups
-Node.js references (including setup-node's `actions/node-versions` source), Bun,
-Playwright packages and images, and SvelteKit with its adapters and integrations.
-Vite joins SvelteKit only in the four confirmed SvelteKit applications listed
-in the preset; other Vite consumers keep their existing grouping.
-
-Each coordinated group keeps major, minor, patch and digest updates on one
-branch. Grouping preserves every member's approval and automerge requirements.
-Manager allowlists remain explicit; a group does not enable a disabled manager.
-Repository-local package rules run later and should not regroup these packages
-into broad test-dependency or Docker-image groups.
-
-The npm and Bun manager settings include a root `tests/package.json` harness and its
-lockfiles while continuing to ignore nested test fixtures and vendored files.
-Their explicit ignore lists retain the recommended defaults; GitOps also
-retains its resource and SOPS exclusions. Ignore paths do not support negated
-exceptions, so do not add `!tests/package.json`.
 
 ## Policy
 
