@@ -22,28 +22,32 @@ jobs:
       fail-fast: false
       matrix:
         owner: [webdev-harke, routivo, loc-news, lkshrk]
+    env:
+      TARGET: ${{ github.event.inputs.repositories || github.event.client_payload.repositories || '' }}
+    # One pending run per owner and target: bursts of identical dispatches collapse into the latest.
     concurrency:
-      group: renovate-${{ matrix.owner }}
-      queue: max
+      group: renovate-${{ matrix.owner }}-${{ github.event.inputs.repositories || github.event.client_payload.repositories || 'all' }}
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@v7
 
       - uses: actions/create-github-app-token@v3
         id: app-token
+        if: env.TARGET == '' || contains(format(',{0}', env.TARGET), format(',{0}/', matrix.owner))
         with:
           client-id: ${{ secrets.RENOVATE_APP_CLIENT_ID }}
           private-key: ${{ secrets.RENOVATE_APP_PRIVATE_KEY }}
           owner: ${{ matrix.owner }}
 
       - uses: renovatebot/github-action@v46.3.10
+        if: steps.app-token.outcome == 'success'
         with:
           configurationFile: renovate/config.js
           token: ${{ steps.app-token.outputs.token }}
           env-regex: '^(?:RENOVATE_\w+|LOG_LEVEL|GITHUB_COM_TOKEN|NODE_OPTIONS|DOCKERHUB_\w+|GHCR_\w+)$'
         env:
           RENOVATE_REPOSITORY_OWNER: ${{ matrix.owner }}
-          RENOVATE_REPO_FILTER: ${{ github.event.inputs.repositories || github.event.client_payload.repositories || '' }}
+          RENOVATE_REPO_FILTER: ${{ env.TARGET }}
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           DOCKERHUB_PASSWORD: ${{ secrets.DOCKERHUB_PASSWORD }}
           GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
