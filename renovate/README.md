@@ -174,6 +174,8 @@ after their base preset:
 
 - patch, minor, pin, and digest updates may automerge after checks pass
 - major updates require Dependency Dashboard approval before automerge
+- GitHub Actions are pinned to commit digests (`helpers:pinGitHubActionDigests`)
+  for every consumer of `github-actions.json5`
 - GitHub Actions and runner images (including Blacksmith `blacksmith-*-ubuntu-*`
   labels) update at any time regardless of the repo schedule; non-majors are
   grouped into one PR, majors open their own PR without approval and never
