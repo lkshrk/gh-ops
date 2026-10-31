@@ -1,6 +1,7 @@
 {
   $schema: "https://docs.renovatebot.com/renovate-schema.json",
-  description: "GitHub Actions and runner images: update any time, group non-majors, open majors as PRs",
+  description: "GitHub Actions and runner images: pin digests, update any time, group non-majors, open majors as PRs",
+  extends: ["helpers:pinGitHubActionDigests"],
   customManagers: [
     {
       customType: "regex",
