@@ -388,14 +388,15 @@ test('fetchOwnerRepos lists one owner\'s repositories, then fetches details in b
     jsonResponse({ data: { repositoryOwner: { repositories: { pageInfo: { hasNextPage: false }, nodes: names } } } }),
     detail,
     detail,
+    detail,
   ]);
 
   const repos = await createGitHubClient({ token: 't', fetchImpl, renovateBot: 'custom[bot]' }).fetchOwnerRepos('me');
 
-  assert.equal(calls.length, 3);
+  assert.equal(calls.length, 4);
   assert.deepEqual(calls[0].variables, { owner: 'me', cursor: null });
   assert.deepEqual(repos.map((repo) => repo.nameWithOwner), names.map((repo) => `me/${repo.name}`));
-  assert.deepEqual(repos.map((repo) => repo.hasRenovateConfig), [true, false, false, false, false, false, true]);
+  assert.deepEqual(repos.map((repo) => repo.hasRenovateConfig), [true, false, false, true, false, false, true]);
   assert.equal(restCalls.length, 14);
   assert.ok(restCalls.includes('https://api.github.com/repos/me/repo0/actions/runs?exclude_pull_requests=true&branch=main&per_page=50'));
   assert.deepEqual(repos[0].actionRuns, { defaultBranch: [], recent: [] });
@@ -450,6 +451,34 @@ test('graphql retries a truncated body once, then reports an incomplete response
     /GitHub GraphQL "viewer" returned an incomplete response/,
   );
   assert.equal(failed.calls.length, 2);
+});
+
+test('graphql treats a null body as an incomplete response', async () => {
+  const { calls, fetchImpl } = scriptedFetch([jsonResponse(null), jsonResponse({ data: { viewer: { login: 'me' } } })]);
+  assert.equal(await createGitHubClient({ token: 't', fetchImpl }).fetchViewer(), 'me');
+  assert.equal(calls.length, 2);
+});
+
+test('fetchOwnerRepos splits a timed-out batch instead of resending it', async () => {
+  const names = ['a', 'b', 'c'].map((name) => ({ name }));
+  const timedOut = new Set();
+  const { calls, fetchImpl } = scriptedFetch([
+    jsonResponse({ data: { repositoryOwner: { repositories: { pageInfo: { hasNextPage: false }, nodes: names } } } }),
+    ...Array.from({ length: 6 }, () => (body) => {
+      const repoNames = Object.keys(body.variables).filter((key) => key.startsWith('name')).map((key) => body.variables[key]);
+      if (repoNames.length > 1 || (repoNames[0] === 'a' && !timedOut.has('a'))) {
+        if (repoNames.length === 1) timedOut.add('a');
+        return jsonResponse({}, 504);
+      }
+      return jsonResponse({ data: { repo0: { nameWithOwner: `me/${repoNames[0]}`, defaultBranchRef: { name: 'main' } } } });
+    }),
+  ]);
+
+  const repos = await createGitHubClient({ token: 't', fetchImpl }).fetchOwnerRepos('me');
+
+  assert.deepEqual(repos.map((repo) => repo.nameWithOwner), ['me/a', 'me/b', 'me/c']);
+  const batchSizes = calls.slice(1).map((body) => Object.keys(body.variables).filter((key) => key.startsWith('name')).length);
+  assert.deepEqual(batchSizes.sort(), [1, 1, 1, 1, 2, 3]);
 });
 
 test('rest retries a truncated body once', async () => {

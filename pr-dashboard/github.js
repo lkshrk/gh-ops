@@ -4,7 +4,8 @@ const API_URL = 'https://api.github.com';
 const GRAPHQL_URL = `${API_URL}/graphql`;
 const DEFAULT_BRANCH_RUNS = 50;
 const RECENT_RUNS = 100;
-const REPO_BATCH_SIZE = 6;
+const REPO_BATCH_SIZE = 3;
+const SUBJECT_BATCH_SIZE = 6;
 const SUBSCRIPTION_LIMIT = 30;
 const NOTIFICATION_PAGE_LIMIT = 10;
 const AUTHORED_LIMIT = 50;
@@ -213,7 +214,7 @@ function createGitHubClient({
     return meta;
   }
 
-  async function graphql(operation, query, variables = {}) {
+  async function graphql(operation, query, variables = {}, { retry = true } = {}) {
     const started = Date.now();
     const init = { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ query, variables }) };
 
@@ -222,7 +223,7 @@ function createGitHubClient({
     let retried = false;
     for (;;) {
       response = await send(operation, GRAPHQL_URL, init);
-      if (RETRYABLE_STATUSES.has(response.status) && !retried) {
+      if (RETRYABLE_STATUSES.has(response.status) && retry && !retried) {
         logger.debug('retrying GitHub request', { operation, ...responseMeta(response) });
         retried = true;
         continue;
@@ -230,11 +231,12 @@ function createGitHubClient({
       if (!response.ok) break;
       try {
         payload = await response.json();
+        if (payload === null) throw new SyntaxError('GraphQL response body is null');
         break;
       } catch (error) {
-        if (retried) {
+        if (!retry || retried) {
           throw new GitHubError(`GitHub GraphQL "${operation}" returned an incomplete response`, {
-            operation, variables, retried, durationMs: Date.now() - started, ...track(response),
+            operation, variables, retried, incomplete: true, durationMs: Date.now() - started, ...track(response),
           }, error);
         }
         logger.debug('retrying incomplete GitHub response', { operation, ...responseMeta(response) });
@@ -500,7 +502,16 @@ function createGitHubClient({
       ['renovateBot', renovateBot],
       ...batch.flatMap((repo, i) => [[`owner${i}`, repo.owner], [`name${i}`, repo.name]]),
     ]);
-    const data = await graphql('repo-details', repoDetailsQuery(batch.length), variables);
+    let data;
+    try {
+      data = await graphql('repo-details', repoDetailsQuery(batch.length), variables, { retry: batch.length === 1 });
+    } catch (error) {
+      const timedOut = error instanceof GitHubError && (RETRYABLE_STATUSES.has(error.status) || error.incomplete);
+      if (!timedOut || batch.length === 1) throw error;
+      logger.debug('splitting timed-out repository batch', { repos: batch.map((repo) => repo.name), status: error.status });
+      const half = Math.ceil(batch.length / 2);
+      return (await Promise.all([fetchRepoBatch(batch.slice(0, half)), fetchRepoBatch(batch.slice(half))])).flat();
+    }
 
     const repos = batch.map((_, i) => data[`repo${i}`]).filter(Boolean);
     return Promise.all(
@@ -559,8 +570,8 @@ function createGitHubClient({
       valid.push({ entry, owner, name, label });
     }
 
-    for (let start = 0; start < valid.length; start += REPO_BATCH_SIZE) {
-      const batch = valid.slice(start, start + REPO_BATCH_SIZE);
+    for (let start = 0; start < valid.length; start += SUBJECT_BATCH_SIZE) {
+      const batch = valid.slice(start, start + SUBJECT_BATCH_SIZE);
       const fields = batch.map(({ entry, owner, name }, i) => {
         const [field, selection] = entry.type === 'Discussion'
           ? ['discussion', `title updatedAt closed closedAt viewerSubscription ${LAST_COMMENT}`]
