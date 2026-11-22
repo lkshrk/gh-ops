@@ -11,6 +11,7 @@ on:
 permissions:
   contents: read
   packages: write
+  id-token: write
 
 concurrency:
   group: pr-dashboard-image-${{ github.ref }}
@@ -49,14 +50,12 @@ jobs:
 
       - name: Create h-cloud deployment token
         if: github.ref == 'refs/heads/main'
-        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3
+        uses: octo-sts/action@f603d3be9d8dd9871a265776e625a27b00effe05 # v1.1.1
         id: deploy-token
         with:
-          client-id: ${{ secrets.RENOVATE_APP_CLIENT_ID }}
-          private-key: ${{ secrets.RENOVATE_APP_PRIVATE_KEY }}
-          owner: lkshrk
-          repositories: h-cloud
-          permission-contents: write
+          domain: sts.h-cloud.io
+          scope: lkshrk
+          identity: h-cloud-dispatch
 
       - name: Deploy published image through h-cloud
         if: github.ref == 'refs/heads/main'
