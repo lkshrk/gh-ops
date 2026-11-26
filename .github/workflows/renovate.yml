@@ -39,7 +39,7 @@ jobs:
           private-key: ${{ secrets.RENOVATE_APP_PRIVATE_KEY }}
           owner: ${{ matrix.owner }}
 
-      - uses: renovatebot/github-action@43b963bf5dd5e57f1f95c59765a018d782870211 # v46.3.11
+      - uses: renovatebot/github-action@7b402fe76b7bc4273576663a09be2f0f85266e2f # v47.0.0
         if: steps.app-token.outcome == 'success'
         with:
           configurationFile: renovate/config.js
